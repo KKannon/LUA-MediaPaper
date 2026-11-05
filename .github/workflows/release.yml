@@ -30,10 +30,15 @@ jobs:
         run: |
           python -m venv env
           .\env\Scripts\python.exe -m pip install -r requirements-lock.txt -r requirements-dev.txt
+      - name: Compilar frontend
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
       - name: Testar
         run: .\env\Scripts\python.exe manage.py test
       - name: Compilar executável
-        run: '& .\scripts\build-portable.ps1'
+        run: '& .\scripts\build-portable.ps1 -SkipFrontend'
       - name: Smoke test
         run: |
           $test = Start-Process -FilePath .\dist\Lua-MediaPaper.exe -ArgumentList '--smoke-test' -WindowStyle Hidden -PassThru -Wait
