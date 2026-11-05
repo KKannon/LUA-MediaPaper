@@ -19,7 +19,17 @@ Baixe **Lua-MediaPaper.exe** na [última release](https://github.com/KKannon/LUA
 - Para abrir sem ativar a inicialização na primeira execução: `Lua-MediaPaper.exe --no-autostart`.
 - Para iniciar apenas na bandeja: `Lua-MediaPaper.exe --background`.
 - Para usar outra porta: `Lua-MediaPaper.exe --port 9000`.
+- Para aceitar conexões apenas deste computador: `Lua-MediaPaper.exe --host 127.0.0.1`.
 - Diagnósticos do executável ficam em `%LOCALAPPDATA%/LuaMediaPaper/lua.log`.
+
+### Acesso pela rede
+
+O executável fica disponível para outros dispositivos da mesma rede (celular, TV, outro PC) na porta **8765**. O endereço aparece no menu da bandeja (**Na rede: 192.168.x.x:8765**) e em **Definições → Aplicativo e sistema**. Por exemplo, abra `http://192.168.0.20:8765/live` em outro aparelho.
+
+- Na primeira execução, o Firewall do Windows pode perguntar se o app pode se comunicar na rede: permita em **Redes privadas**.
+- Os endereços IP e o nome deste computador são aceitos automaticamente; outros cabeçalhos `Host` são recusados. Se o IP mudar, reinicie o app pela bandeja.
+- Qualquer pessoa na mesma rede pode ver e alterar o wallpaper, pois o app não tem login. Use apenas em redes de confiança ou inicie com `--host 127.0.0.1`.
+- **Iniciar com o Windows** só pode ser alterado no próprio computador.
 
 O wallpaper ocupa a janela do aplicativo ou toda a tela usando o modo tela cheia. Ele **não substitui o fundo nativo do Windows atrás dos ícones**. Use **Abrir /live** na Home, ou o ícone de maximizar da prévia para tela cheia imediata. Saia com **Esc**.
 
@@ -100,10 +110,10 @@ No Windows ou Linux, instale `requirements.txt`, compile o frontend e execute:
 ```powershell
 $env:LUAMP_ALLOWED_HOSTS = 'localhost,127.0.0.1,192.168.1.100,lua.seudominio.com'
 $env:LUAMP_SECRET_KEY = 'defina-uma-chave-longa-e-aleatoria'
-.\env\Scripts\python.exe launcher.py --server --host 0.0.0.0 --port 8765
+.\env\Scripts\python.exe launcher.py --server --port 8765
 ```
 
-Abra `http://IP-DO-SERVIDOR:8765/`. Ajuste o IP em `LUAMP_ALLOWED_HOSTS`. No Linux, use `export` para as variáveis e o Python do seu ambiente virtual. O modo servidor não cria ícone de bandeja nem altera a inicialização do Windows. O executável também aceita `--server`, mas a distribuição Python ou Docker permite acompanhar os logs no terminal.
+O servidor escuta em `0.0.0.0` por padrão e mostra os endereços da rede no terminal (`Na rede: http://...`). Abra `http://IP-DO-SERVIDOR:8765/`. Sem `LUAMP_ALLOWED_HOSTS`, os IPs e o nome da máquina são aceitos automaticamente; defina a variável para incluir um domínio. No Linux, use `export` para as variáveis e o Python do seu ambiente virtual. O modo servidor não cria ícone de bandeja nem altera a inicialização do Windows. O executável também aceita `--server`, mas a distribuição Python ou Docker permite acompanhar os logs no terminal.
 
 Alternativamente, copie `.env.example` para `.env`, configure a chave e os hosts e execute:
 
@@ -123,7 +133,7 @@ npm test
 npm run build
 ```
 
-Os 20 testes do backend e 11 testes do frontend passaram. Eles verificam PDF real, ordem dos capítulos, acentos, imagens, paginação de capítulos longos, A4/Carta, EPUB inválido/criptografado, limites de ZIP, ausência de downloads externos, CSRF, rotas e restrições da API de inicialização. Os testes adicionais cobrem sincronização entre páginas, recuperação de conexão, concorrência de escrita, importação inicial, ETag e ciclo de aquisição/liberação do bloqueio de tela. O executável Windows passou no smoke test independente e foi iniciado em modo bandeja, com resposta HTTP e registro de inicialização automática confirmados. Na interface foram testados vídeo remoto, GIF animado, tela cheia/Esc, persistência das preferências, conversão e download do PDF. O layout foi inspecionado em tela estreita e desktop. Docker foi preparado, mas não executado neste ambiente, onde o comando Docker não está instalado.
+Os testes do backend e 11 testes do frontend passaram. Eles verificam PDF real, ordem dos capítulos, acentos, imagens, paginação de capítulos longos, A4/Carta, EPUB inválido/criptografado, limites de ZIP, ausência de downloads externos, CSRF, rotas e restrições da API de inicialização. Os testes adicionais cobrem sincronização entre páginas, recuperação de conexão, concorrência de escrita, importação inicial, ETag e ciclo de aquisição/liberação do bloqueio de tela. O executável Windows passou no smoke test independente e foi iniciado em modo bandeja, com resposta HTTP e registro de inicialização automática confirmados. Na interface foram testados vídeo remoto, GIF animado, tela cheia/Esc, persistência das preferências, conversão e download do PDF. O layout foi inspecionado em tela estreita e desktop. Docker foi preparado, mas não executado neste ambiente, onde o comando Docker não está instalado.
 
 ## Créditos
 

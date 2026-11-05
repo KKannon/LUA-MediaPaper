@@ -12,7 +12,7 @@ from urllib.request import urlopen
 def main():
     parser = argparse.ArgumentParser(description='Lua MediaPaper')
     parser.add_argument('--server', action='store_true', help='Run as a server, without tray or startup integration')
-    parser.add_argument('--host', default='127.0.0.1')
+    parser.add_argument('--host', default='0.0.0.0', help='Address to listen on. 0.0.0.0 exposes the app on the local network; use 127.0.0.1 for this computer only')
     parser.add_argument('--port', default=8765, type=int)
     parser.add_argument('--background', action='store_true', help='Start in the tray without opening the browser')
     parser.add_argument('--no-autostart', action='store_true', help='Do not register startup on first launch')
@@ -21,15 +21,15 @@ def main():
     if not 1 <= args.port <= 65535:
         parser.error('Port must be between 1 and 65535')
     desktop = sys.platform == 'win32' and not args.server and not args.smoke_test
-    if desktop and args.host != '127.0.0.1':
-        parser.error('Desktop mode uses 127.0.0.1. Use --server for network access.')
     os.environ['DJANGO_SETTINGS_MODULE'] = 'mediapaper.settings'
     os.environ['LUAMP_DESKTOP'] = '1' if desktop else '0'
     os.environ['LUAMP_PORT'] = str(args.port)
+    os.environ['LUAMP_HOST'] = args.host
     if getattr(sys, 'frozen', False):
         os.environ.setdefault('LUAMP_DATA_DIR', str(Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'LuaMediaPaper' / 'data'))
-    # Host validation remains explicit in network mode.
-    os.environ.setdefault('LUAMP_ALLOWED_HOSTS', 'localhost,127.0.0.1,[::1]')
+    # Accept this computer's own names and LAN addresses; other Host headers stay blocked.
+    from app.network import allowed_hosts, network_urls
+    os.environ.setdefault('LUAMP_ALLOWED_HOSTS', allowed_hosts(args.host))
     import django
     django.setup()
     from mediapaper.wsgi import application
@@ -53,7 +53,10 @@ def main():
         report = {'ok': True, 'routes': 6, 'pdfBytes': len(pdf), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg')))}
         Path('lua-smoke-test.json').write_text(json.dumps(report), encoding='utf-8')
         return
-    url = f'http://127.0.0.1:{args.port}/'
+    local_host = '127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host
+    url = f'http://{local_host}:{args.port}/'
+    from app.youtube import initialize
+    initialize()
     try:
         server = create_server(application, host=args.host, port=args.port, threads=4, max_request_body_size=35*1024*1024, channel_timeout=180)
     except OSError:
@@ -69,12 +72,15 @@ def main():
             except Exception:
                 pass
         raise RuntimeError(f'A porta {args.port} já está em uso. Escolha outra usando --port.')
+    logging.info('Listening on %s:%s; network: %s', args.host, args.port, ', '.join(network_urls(args.host, args.port)) or 'none')
     if desktop:
         threading.Thread(target=server.run, daemon=True).start()
         from app.desktop import run_tray
         run_tray(server, url, background=args.background, autostart=not args.no_autostart)
     else:
-        print(f'Lua MediaPaper: http://{args.host}:{args.port}/', flush=True)
+        print(f'Lua MediaPaper: {url}', flush=True)
+        for address in network_urls(args.host, args.port):
+            print(f'Na rede: {address}', flush=True)
         try:
             server.run()
         except KeyboardInterrupt:

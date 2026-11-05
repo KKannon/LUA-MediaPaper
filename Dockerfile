@@ -1,4 +1,4 @@
-FROM node:24-alpine AS frontend
+FROM node:24-bookworm-slim AS frontend
 WORKDIR /build/frontend
 COPY frontend/package*.json ./
 RUN npm ci --no-audit --no-fund
@@ -7,6 +7,8 @@ RUN npm run build
 
 FROM python:3.14-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libstdc++6 && rm -rf /var/lib/apt/lists/*
+COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 COPY requirements-lock.txt ./
 RUN pip install --no-cache-dir -r requirements-lock.txt

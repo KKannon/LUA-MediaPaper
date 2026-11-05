@@ -28,6 +28,7 @@ export type Media = {
   url: string;
   type: "image" | "video" | "gif";
   thumbnail?: string;
+  sourceUrl?: string;
 };
 export const presets: Media[] = [
   {

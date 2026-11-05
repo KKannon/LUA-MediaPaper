@@ -1,0 +1,59 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag da release (ex. v1.2.0)
+        required: true
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependências
+        run: |
+          python -m venv env
+          .\env\Scripts\python.exe -m pip install -r requirements-lock.txt -r requirements-dev.txt
+      - name: Testar
+        run: .\env\Scripts\python.exe manage.py test
+      - name: Compilar executável
+        run: '& .\scripts\build-portable.ps1'
+      - name: Smoke test
+        run: |
+          $test = Start-Process -FilePath .\dist\Lua-MediaPaper.exe -ArgumentList '--smoke-test' -WindowStyle Hidden -PassThru -Wait
+          if ($test.ExitCode -ne 0) { throw "Smoke test falhou: $($test.ExitCode)" }
+          Get-Content lua-smoke-test.json
+      - name: Publicar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $hash = (Get-FileHash .\dist\Lua-MediaPaper.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  Lua-MediaPaper.exe" | Set-Content -Encoding ascii .\dist\SHA256SUMS.txt
+          $notes = "releases/$env:TAG.md"
+          if (-not (Test-Path $notes)) { $notes = $null }
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG .\dist\Lua-MediaPaper.exe .\dist\SHA256SUMS.txt --clobber
+            if ($notes) { gh release edit $env:TAG --notes-file $notes }
+          } elseif ($notes) {
+            gh release create $env:TAG .\dist\Lua-MediaPaper.exe .\dist\SHA256SUMS.txt --title "Lua MediaPaper $($env:TAG.TrimStart('v'))" --notes-file $notes --latest
+          } else {
+            gh release create $env:TAG .\dist\Lua-MediaPaper.exe .\dist\SHA256SUMS.txt --title "Lua MediaPaper $($env:TAG.TrimStart('v'))" --generate-notes --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao publicar a release.' }

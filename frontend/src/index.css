@@ -1,4 +1,10 @@
 @import "tailwindcss";
+.youtube-progress {
+  margin-top: 15px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
 /* The live route deliberately contains no navigation or preview badges. */
 .live-display {
   position: fixed;

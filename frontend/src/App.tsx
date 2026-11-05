@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Live } from "@/components/live";
 import { useWallpaper } from "@/lib/use-wallpaper";
+import { useYouTube, isYouTube } from "@/lib/use-youtube";
 import {
   Dialog,
   DialogContent,
@@ -60,7 +61,12 @@ import {
   type Preferences,
 } from "@/lib/storage";
 
-type Status = { desktop: boolean; startup: boolean; version: string };
+type Status = {
+  desktop: boolean;
+  startup: boolean;
+  version: string;
+  networkUrls?: string[];
+};
 type OptionProps = {
   id: string;
   label: string;
@@ -252,6 +258,28 @@ function Home({
   const [now, setNow] = useState(new Date());
   const [paused, setPaused] = useState(!preferences.autoplay);
   const [dialog, setDialog] = useState(false);
+  const youtube = useYouTube();
+  const savedYouTubeJob = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const job = youtube.job;
+    if (
+      !job.id ||
+      job.id !== youtube.initiated.current ||
+      savedYouTubeJob.current === job.id
+    )
+      return;
+    if (job.status === "ready" && job.media?.sourceUrl) {
+      savedYouTubeJob.current = job.id;
+      const entry = { ...job.media, url: job.media.sourceUrl };
+      setLibrary((old) =>
+        [entry, ...old.filter((item) => item.id !== entry.id)].slice(0, 20),
+      );
+      toast.success("Vídeo do YouTube pronto e aplicado.");
+    } else if (job.status === "error") {
+      savedYouTubeJob.current = job.id;
+      toast.error(job.message || "Não foi possível baixar o vídeo.");
+    }
+  }, [youtube.job, setLibrary]);
   const stage = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const urlInput = useRef<HTMLInputElement>(null);
@@ -330,10 +358,16 @@ function Home({
       toast.error("Informe um link válido começando com https:// ou http://.");
       return;
     }
-    if (
-      parsed.hostname === "youtu.be" ||
-      /(^|\.)(youtube\.com|vimeo\.com)$/.test(parsed.hostname)
-    ) {
+    if (isYouTube(parsed.href)) {
+      void youtube.start(parsed.href).then((started) => {
+        if (started) {
+          setDialog(false);
+          setUrl("");
+        }
+      });
+      return;
+    }
+    if (/(^|\.)vimeo\.com$/.test(parsed.hostname)) {
       toast.error(
         "Use o link direto do arquivo, como .mp4 ou .webm. Links de páginas de vídeo não são compatíveis.",
       );
@@ -387,7 +421,10 @@ function Home({
           type="url"
         />
       </div>
-      <p className="helper">Cole o link direto de uma foto, vídeo ou GIF.</p>
+      <p className="helper">
+        Foto, vídeo, GIF ou YouTube de até 20 min. YouTube é baixado na melhor
+        qualidade, até 4K.
+      </p>
       <div className="type-picker" aria-label="Tipo de mídia">
         {(
           [
@@ -409,9 +446,17 @@ function Home({
           </button>
         ))}
       </div>
-      <Button type="submit" className="w-full h-9 text-xs gap-2">
-        <Check size={13} />
-        Aplicar wallpaper
+      <Button
+        type="submit"
+        className="w-full h-9 text-xs gap-2"
+        disabled={youtube.busy && isYouTube(url)}
+      >
+        {youtube.starting ? (
+          <LoaderCircle size={13} className="spin" />
+        ) : (
+          <Check size={13} />
+        )}
+        {isYouTube(url) ? "Baixar e aplicar YouTube" : "Aplicar wallpaper"}
       </Button>
     </form>
   );
@@ -634,6 +679,40 @@ function Home({
               Seu wallpaper
             </h2>
             {!dialog && sourceForm}
+            {youtube.job.status !== "idle" && (
+              <div className="youtube-progress" role="status">
+                <div className="flex items-center gap-2 text-[11px]">
+                  {youtube.busy ? (
+                    <LoaderCircle size={13} className="spin text-primary" />
+                  ) : youtube.job.status === "ready" ? (
+                    <Check size={13} className="text-primary" />
+                  ) : (
+                    <Film size={13} />
+                  )}
+                  <span>{youtube.job.title || "YouTube"}</span>
+                </div>
+                <p className="helper !mb-2">{youtube.job.message}</p>
+                {youtube.job.status === "downloading" && (
+                  <progress
+                    aria-label="Progresso do download"
+                    max={100}
+                    value={youtube.job.progress ?? undefined}
+                    className="w-full h-1 accent-[#c1e697]"
+                  />
+                )}
+                {youtube.busy && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-[10px]"
+                    onClick={() => void youtube.cancel()}
+                  >
+                    Cancelar download
+                  </Button>
+                )}
+              </div>
+            )}
           </section>
           <section className="panel">
             <h2 className="panel-heading">
@@ -730,14 +809,20 @@ function Home({
               <button
                 className={`wallpaper-card w-full ${media.id === item.id ? "selected" : ""}`}
                 onClick={() => {
-                  setMedia(item);
-                  toast.success(`Wallpaper “${item.name}” aplicado.`);
+                  if (isYouTube(item.sourceUrl || item.url))
+                    void youtube.start(item.sourceUrl || item.url);
+                  else {
+                    setMedia(item);
+                    toast.success(`Wallpaper “${item.name}” aplicado.`);
+                  }
                 }}
                 aria-label={`Aplicar ${item.name}`}
                 aria-pressed={media.id === item.id}
               >
                 <div className="thumb">
-                  {item.type === "video" ? (
+                  {item.thumbnail ? (
+                    <img src={item.thumbnail} alt="" loading="lazy" />
+                  ) : item.type === "video" ? (
                     <video src={item.url} muted preload="metadata" />
                   ) : (
                     <img src={item.url} alt="" loading="lazy" />
@@ -944,6 +1029,25 @@ function Settings({
             {status?.desktop
               ? "O app continua rodando na bandeja quando você fecha o navegador. Use o ícone da Lua para abrir ou encerrar."
               : "No modo servidor, acesse o mesmo endereço em qualquer dispositivo autorizado na sua rede."}
+          </p>
+          <div className="separator" />
+          <p className="setting-description">
+            {status?.networkUrls?.length ? (
+              <>
+                Outros dispositivos na mesma rede podem abrir{" "}
+                {status.networkUrls.map((url, index) => (
+                  <span key={url}>
+                    {index > 0 && " ou "}
+                    <a href={url + "live"} className="underline">
+                      {url + "live"}
+                    </a>
+                  </span>
+                ))}
+                . Se o Windows perguntar, permita o acesso na rede privada.
+              </>
+            ) : (
+              "Acesso pela rede indisponível: o app está ouvindo apenas neste computador ou não há rede conectada."
+            )}
           </p>
         </section>
         <section className="panel">
@@ -1336,7 +1440,7 @@ function Footer() {
     <footer className="app-footer">
       <span className="footer-left">
         <Moon size={11} />
-        Lua MediaPaper <span className="ml-2 opacity-60">v1.1.0</span>
+        Lua MediaPaper <span className="ml-2 opacity-60">v1.2.0</span>
       </span>
       <span>Feito com muito carinho para minha amiga Lua.</span>
     </footer>

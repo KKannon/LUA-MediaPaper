@@ -93,6 +93,22 @@ class ApiTests(SimpleTestCase):
             self.assertEqual(self.client.post('/api/startup', data='{"enabled":true}', content_type='application/json', REMOTE_ADDR='192.168.0.2').status_code, 403)
             self.assertEqual(self.client.post('/api/startup', data='{"enabled":"yes"}', content_type='application/json', REMOTE_ADDR='127.0.0.1').status_code, 400)
 
+class NetworkTests(SimpleTestCase):
+    def test_all_interfaces_accept_lan_addresses(self):
+        from app import network
+        with patch.object(network, 'local_addresses', return_value=['192.168.0.20']):
+            hosts = network.allowed_hosts('0.0.0.0').split(',')
+            self.assertIn('127.0.0.1', hosts)
+            self.assertIn('192.168.0.20', hosts)
+            self.assertEqual(network.network_urls('0.0.0.0', 8765), ['http://192.168.0.20:8765/'])
+        self.assertEqual(network.network_urls('127.0.0.1', 8765), [])
+        self.assertNotIn('192.168.0.20', network.allowed_hosts('127.0.0.1'))
+
+    def test_status_lists_network_urls(self):
+        from app import network
+        with patch.dict('os.environ', {'LUAMP_HOST':'0.0.0.0', 'LUAMP_PORT':'8765'}), patch.object(network, 'local_addresses', return_value=['10.0.0.5']):
+            self.assertEqual(self.client.get('/api/status').json()['networkUrls'], ['http://10.0.0.5:8765/'])
+
 class WallpaperTests(SimpleTestCase):
     def setUp(self):
         from tempfile import TemporaryDirectory

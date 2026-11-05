@@ -12,6 +12,7 @@ def _connection():
     directory.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(directory / 'wallpaper.sqlite3', timeout=10)
     connection.execute('CREATE TABLE IF NOT EXISTS wallpaper (id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL, payload TEXT NOT NULL)')
+    connection.execute('CREATE TABLE IF NOT EXISTS youtube_job (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL)')
     connection.execute('INSERT OR IGNORE INTO wallpaper VALUES (1, 0, ?)', (json.dumps({'media': DEFAULT_MEDIA, 'preferences': DEFAULT_PREFERENCES}),))
     connection.commit()
     return connection
@@ -29,16 +30,25 @@ def read_state():
 class Conflict(Exception):
     pass
 
-def update_state(changes, initial_revision=None):
+def update_state(changes, initial_revision=None, download_id=None):
     connection = _connection()
     try:
         connection.execute('BEGIN IMMEDIATE')
         revision, raw = connection.execute('SELECT revision, payload FROM wallpaper WHERE id = 1').fetchone()
         if initial_revision is not None and initial_revision != revision:
             raise Conflict()
+        row = connection.execute('SELECT payload FROM youtube_job WHERE id=1').fetchone()
+        job = json.loads(row[0]) if row else None
+        if download_id and (not job or job.get('id') != download_id or job.get('status') not in ('checking','downloading','processing')):
+            raise Conflict()
         state = json.loads(raw)
         if 'media' in changes:
             state['media'] = changes['media']
+            if job and job.get('status') in ('checking','downloading','processing'):
+                job.update({'status':'ready' if download_id else 'cancelled', 'message':'Vídeo pronto e aplicado.' if download_id else 'Download cancelado pela troca de wallpaper.', 'progress':100 if download_id else None})
+                if download_id:
+                    job['media'] = changes['media']
+                connection.execute('UPDATE youtube_job SET payload=? WHERE id=1', (json.dumps(job, ensure_ascii=False),))
         state['preferences'] = {**DEFAULT_PREFERENCES, **state['preferences'], **changes.get('preferences', {})}
         connection.execute('UPDATE wallpaper SET revision = ?, payload = ? WHERE id = 1', (revision + 1, json.dumps(state, ensure_ascii=False)))
         connection.commit()
@@ -60,7 +70,7 @@ def validate_changes(body):
     changes = {}
     if 'media' in body:
         media = body['media']
-        if not isinstance(media, dict) or set(media) - {'id', 'name', 'description', 'url', 'type', 'thumbnail'}:
+        if not isinstance(media, dict) or set(media) - {'id', 'name', 'description', 'url', 'type', 'thumbnail', 'sourceUrl'}:
             raise ValueError('Mídia inválida.')
         for field, maximum in (('id', 100), ('name', 150), ('description', 300), ('url', 4096)):
             if not isinstance(media.get(field), str) or not media[field].strip() or len(media[field]) > maximum:
@@ -69,9 +79,16 @@ def validate_changes(body):
             raise ValueError('Tipo de mídia inválido.')
         parsed = urlparse(media['url'])
         builtin = media['url'] in [f'/wallpapers/{name}.jpg' for name in ('forest', 'mountain', 'sea', 'dunes')]
+        if media['url'].startswith('/media/'):
+            current = read_state()['media']
+            if media['url'] != current['url']:
+                raise ValueError('O vídeo anterior já foi removido. Use o link do YouTube para baixá-lo novamente.')
+            changes['media'] = current
+            builtin = True
         if not builtin and (parsed.scheme not in ('https', 'http') or not parsed.netloc or parsed.username or parsed.password):
             raise ValueError('Use um link HTTP ou HTTPS direto, sem credenciais.')
-        changes['media'] = {key: media[key] for key in ('id', 'name', 'description', 'url', 'type')}
+        if 'media' not in changes:
+            changes['media'] = {key: media[key] for key in ('id', 'name', 'description', 'url', 'type')}
     if 'preferences' in body:
         preferences = body['preferences']
         if not isinstance(preferences, dict) or set(preferences) - set(DEFAULT_PREFERENCES):

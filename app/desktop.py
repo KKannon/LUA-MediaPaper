@@ -29,6 +29,7 @@ def set_startup(enabled):
                 args.append(str(Path(__file__).resolve().parent.parent / 'launcher.py'))
             args.append('--background')
             args.extend(['--port', os.environ.get('LUAMP_PORT', '8765')])
+            args.extend(['--host', os.environ.get('LUAMP_HOST', '0.0.0.0')])
             winreg.SetValueEx(key, VALUE_NAME, 0, winreg.REG_SZ, subprocess.list2cmdline(args))
         else:
             try:
@@ -64,6 +65,13 @@ def run_tray(server, url, background=False, autostart=True):
         webbrowser.open(url + 'definicoes')
     def open_live(icon=None, item=None):
         webbrowser.open(url + 'live')
+    from app.network import network_urls
+    def network_url():
+        urls = network_urls(os.environ.get('LUAMP_HOST', '0.0.0.0'), os.environ.get('LUAMP_PORT', '8765'))
+        return urls[0] if urls else None
+    def open_network(icon=None, item=None):
+        if network_url():
+            webbrowser.open(network_url() + 'live')
     def toggle_startup(icon, item):
         set_startup(not startup_enabled())
         icon.update_menu()
@@ -73,6 +81,7 @@ def run_tray(server, url, background=False, autostart=True):
         pystray.MenuItem('Abrir Lua MediaPaper', open_app, default=True),
         pystray.MenuItem('Abrir wallpaper ao vivo', open_live),
         pystray.MenuItem('Definições', open_settings),
+        pystray.MenuItem(lambda item: 'Na rede: ' + (network_url() or 'indisponível').removeprefix('http://').rstrip('/'), open_network, enabled=lambda item: network_url() is not None),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem('Iniciar com o Windows', toggle_startup, checked=lambda item: startup_enabled()),
         pystray.Menu.SEPARATOR,

@@ -23,7 +23,9 @@ def status(request):
     if desktop:
         from app.desktop import startup_enabled
         startup = startup_enabled()
-    return JsonResponse({'name': 'Lua MediaPaper', 'version': '1.1.0', 'desktop': desktop, 'startup': startup, 'maxUploadMB': 30})
+    from app.network import network_urls
+    urls = network_urls(os.environ.get('LUAMP_HOST', '127.0.0.1'), os.environ.get('LUAMP_PORT', '8765'))
+    return JsonResponse({'name': 'Lua MediaPaper', 'version': '1.2.0', 'desktop': desktop, 'startup': startup, 'maxUploadMB': 30, 'networkUrls': urls})
 
 @ensure_csrf_cookie
 @require_http_methods(['GET', 'PATCH'])
@@ -31,6 +33,8 @@ def wallpaper(request):
     from app.wallpaper import read_state, update_state, validate_changes, Conflict
     from django.http import HttpResponse
     if request.method == 'GET':
+        from app.youtube import retry_cleanup
+        retry_cleanup()
         state = read_state()
         etag = f'"lua-wallpaper-{state["revision"]}"'
         response = HttpResponse(status=304) if request.headers.get('If-None-Match') == etag else JsonResponse(state)
@@ -42,11 +46,86 @@ def wallpaper(request):
             body = json.loads(request.body)
             changes = validate_changes(body)
             response = JsonResponse(update_state(changes, body.get('initialRevision')))
+            if 'media' in changes:
+                from app.youtube import cleanup_media
+                cleanup_media()
         except Conflict:
             response = JsonResponse(read_state(), status=409)
         except (ValueError, TypeError):
             return JsonResponse({'error': 'Configuração inválida. Confira o link e as preferências.'}, status=400)
     response['Cache-Control'] = 'no-store'
+    return response
+
+@ensure_csrf_cookie
+@require_http_methods(['GET', 'POST', 'DELETE'])
+def youtube(request):
+    from app import youtube as importer
+    if request.method == 'GET':
+        response = JsonResponse(importer.read_job())
+    elif request.method == 'DELETE':
+        response = JsonResponse(importer.cancel())
+    else:
+        try:
+            if len(request.body) > 8192:
+                raise ValueError()
+            body = json.loads(request.body)
+            if not isinstance(body, dict):
+                raise ValueError()
+            response = JsonResponse(importer.start(body.get('url')), status=202)
+        except importer.Busy as exc:
+            return JsonResponse({'error':str(exc)}, status=409)
+        except (ValueError, TypeError) as exc:
+            message = str(exc) if isinstance(exc, importer.ImportError) else 'Informe um link válido do YouTube.'
+            return JsonResponse({'error':message}, status=400)
+    response['Cache-Control'] = 'no-store'
+    return response
+
+@require_http_methods(['GET', 'HEAD'])
+def downloaded_media(request, filename):
+    from pathlib import Path
+    from django.conf import settings
+    from django.http import HttpResponse, StreamingHttpResponse, Http404
+    from app.wallpaper import read_state
+    if not re.fullmatch(r'[a-f0-9]{32}\.mp4', filename) or read_state()['media']['url'] != '/media/' + filename:
+        raise Http404()
+    root = (Path(settings.LUAMP_DATA_DIR) / 'media').resolve()
+    path = (root / filename).resolve()
+    if path.parent != root or not path.is_file():
+        raise Http404()
+    size = path.stat().st_size
+    start, end, code = 0, size - 1, 200
+    header = request.headers.get('Range')
+    if header:
+        match = re.fullmatch(r'bytes=(\d*)-(\d*)', header)
+        if not match or not any(match.groups()):
+            return HttpResponse(status=416, headers={'Content-Range':f'bytes */{size}'})
+        if match[1]:
+            start = int(match[1])
+            end = min(int(match[2]), size - 1) if match[2] else size - 1
+        else:
+            start = max(0, size - int(match[2]))
+        if start > end or start >= size:
+            return HttpResponse(status=416, headers={'Content-Range':f'bytes */{size}'})
+        code = 206
+    def chunks():
+        try:
+            with path.open('rb') as stream:
+                stream.seek(start)
+                remaining = end - start + 1
+                while remaining:
+                    chunk = stream.read(min(256 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+        except FileNotFoundError:
+            return
+    response = HttpResponse(status=code, content_type='video/mp4') if request.method == 'HEAD' else StreamingHttpResponse(chunks(), status=code, content_type='video/mp4')
+    response['Content-Length'] = end - start + 1
+    response['Accept-Ranges'] = 'bytes'
+    response['Cache-Control'] = 'no-store'
+    if code == 206:
+        response['Content-Range'] = f'bytes {start}-{end}/{size}'
     return response
 
 @require_POST
