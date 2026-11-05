@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- Basic Icons -->
+    <link href="https://cdn.boxicons.com/3.0.8/fonts/basic/boxicons.min.css" rel="stylesheet">
+    <!-- Filled Icons -->
+    <link href="https://cdn.boxicons.com/3.0.8/fonts/filled/boxicons-filled.min.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Changa+One:ital@0;1&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            border: 0;
+            font-size: 100%;
+            font-family: "Changa One", sans-serif;
+            font-weight: 400;
+            font-style: normal;
+            font: inherit;
+            vertical-align: baseline;
+
+        }
+
+        nav {
+            display: flex;
+            align-items: center;
+            margin-top: 5px;
+            padding: 5px;
+            justify-content: space-between;
+            width: 100%;
+            height: 10px;
+        }
+    </style>
+    <title>Mediapaper</title>
+</head>
+<body>
+    <nav>
+        <div class="rightside">
+            <img src="{% static 'my_app/example.jpg' %}" alt="My image">
+        </div>
+        <div class="leftside">
+            <i class="bx bx-cog" />
+        </div>
+    </nav>
+</body>
+</html>

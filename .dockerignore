@@ -1,0 +1,15 @@
+env
+.venv
+frontend/node_modules
+static/frontend
+build
+dist
+tmp
+.local
+__pycache__
+*.pyc
+.git
+.env
+output
+*.sqlite3
+lua-smoke-test.json

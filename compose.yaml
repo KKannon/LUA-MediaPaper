@@ -1,0 +1,16 @@
+services:
+  lua-mediapaper:
+    build: .
+    ports:
+      - "8765:8765"
+    environment:
+      LUAMP_ALLOWED_HOSTS: "${LUAMP_ALLOWED_HOSTS:-localhost,127.0.0.1}"
+      LUAMP_SECRET_KEY: "${LUAMP_SECRET_KEY:?Defina LUAMP_SECRET_KEY no arquivo .env}"
+      LUAMP_CSRF_ORIGINS: "${LUAMP_CSRF_ORIGINS:-}"
+      LUAMP_DATA_DIR: /home/lua/data
+    volumes:
+      - lua-data:/home/lua/data
+    restart: unless-stopped
+    init: true
+volumes:
+  lua-data:
