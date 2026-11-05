@@ -9,5 +9,7 @@ urlpatterns = [
     path('api/wallpaper', views.wallpaper),
     path('api/youtube', views.youtube),
     path('media/<str:filename>', views.downloaded_media),
-    re_path(r'^(?:|home/?|live/?|definicoes/?|mais/?|mais/epub-pdf/?|mais/pdf-epub/?)$', views.player),
+    path('api/monitors', views.monitors),
+    path('api/monitors/<str:device_id>', views.monitor_device),
+    re_path(r'^(?:|home/?|live/?|definicoes/?|mais/?|mais/epub-pdf/?|mais/pdf-epub/?|monitor/?)$', views.player),
 ]

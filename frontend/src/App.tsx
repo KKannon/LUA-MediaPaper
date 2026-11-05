@@ -41,6 +41,8 @@ import { Toaster, toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Live } from "@/components/live";
+import { MonitorOS } from "@/components/monitor";
+import { ScreensPanel } from "@/components/screens";
 import { useWallpaper } from "@/lib/use-wallpaper";
 import { useYouTube, isYouTube } from "@/lib/use-youtube";
 import {
@@ -107,7 +109,10 @@ function Toggle({
 export default function App() {
   const location = useLocation();
   const live = /^\/live\/?$/.test(location.pathname);
-  const { media, setMedia, preferences, setPreferences } = useWallpaper(live);
+  const monitor = /^\/monitor\/?$/.test(location.pathname);
+  const { media, setMedia, preferences, setPreferences } = useWallpaper(
+    live || monitor,
+  );
   const [library, setLibrary] = useStored<Media[]>("lua:library", []);
   const [status, setStatus] = useState<Status | null>(null);
   const [online, setOnline] = useState(false);
@@ -124,13 +129,14 @@ export default function App() {
       .catch(() => setOnline(false));
   }, []);
   useEffect(() => {
-    document.title = `${live ? "Ao vivo" : location.pathname.startsWith("/definicoes") ? "Definições" : location.pathname.startsWith("/mais/epub-pdf") ? "EPUB para PDF" : location.pathname.startsWith("/mais/pdf-epub") ? "PDF para EPUB" : location.pathname.startsWith("/mais") ? "Mais ferramentas" : "Home"} · Lua MediaPaper`;
+    document.title = `${live ? "Ao vivo" : monitor ? "Lua OS" : location.pathname.startsWith("/definicoes") ? "Definições" : location.pathname.startsWith("/mais/epub-pdf") ? "EPUB para PDF" : location.pathname.startsWith("/mais/pdf-epub") ? "PDF para EPUB" : location.pathname.startsWith("/mais") ? "Mais ferramentas" : "Home"} · Lua MediaPaper`;
   }, [location.pathname]);
   const updatePreference = <K extends keyof Preferences>(
     key: K,
     value: Preferences[K],
   ) => setPreferences((previous) => ({ ...previous, [key]: value }));
   if (live) return <Live media={media} preferences={preferences} />;
+  if (monitor) return <MonitorOS media={media} preferences={preferences} />;
   return (
     <>
       <header className="app-nav">
@@ -870,6 +876,7 @@ function Home({
           )}
         </div>
       </section>
+      <ScreensPanel />
       <Footer />
     </main>
   );

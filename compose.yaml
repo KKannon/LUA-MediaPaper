@@ -3,6 +3,7 @@ services:
     build: .
     ports:
       - "8765:8765"
+      - "8766:8766"
     environment:
       LUAMP_ALLOWED_HOSTS: "${LUAMP_ALLOWED_HOSTS:-localhost,127.0.0.1}"
       LUAMP_SECRET_KEY: "${LUAMP_SECRET_KEY:?Defina LUAMP_SECRET_KEY no arquivo .env}"

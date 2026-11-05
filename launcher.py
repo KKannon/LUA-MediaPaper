@@ -44,7 +44,7 @@ def main():
         from pypdf import PdfReader
         from io import BytesIO
         client = Client(HTTP_HOST='localhost')
-        for route in ('/', '/live', '/definicoes', '/mais', '/mais/epub-pdf', '/mais/pdf-epub', '/api/status'):
+        for route in ('/', '/live', '/monitor', '/definicoes', '/mais', '/mais/epub-pdf', '/mais/pdf-epub', '/api/status', '/api/monitors'):
             if client.get(route).status_code != 200:
                 raise RuntimeError('Route failed: ' + route)
         pdf = convert_epub(sample_epub())
@@ -57,7 +57,7 @@ def main():
             raise RuntimeError('EPUB conversion failed')
         # The portable build must ship everything the YouTube importer needs.
         from app.youtube import tool
-        import subprocess, yt_dlp, yt_dlp_ejs
+        import subprocess, yt_dlp, yt_dlp_ejs, websockets.asyncio.server, websockets.asyncio.client, app.edge_input, app.browser
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
         tools = {}
         for name, option in (('ffmpeg', '-version'), ('ffprobe', '-version'), ('node', '--version')):
@@ -65,7 +65,7 @@ def main():
             if result.returncode:
                 raise RuntimeError('Tool failed: ' + name)
             tools[name] = result.stdout.split('\n')[0].strip()
-        report = {'ok': True, 'routes': 7, 'pdfBytes': len(pdf), 'epubBytes': len(epub), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg'))), 'ytDlp': yt_dlp.version.__version__, 'tools': tools}
+        report = {'ok': True, 'routes': 9, 'pdfBytes': len(pdf), 'epubBytes': len(epub), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg'))), 'ytDlp': yt_dlp.version.__version__, 'tools': tools}
         Path('lua-smoke-test.json').write_text(json.dumps(report), encoding='utf-8')
         return
     local_host = '127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host
@@ -87,6 +87,12 @@ def main():
             except Exception:
                 pass
         raise RuntimeError(f'A porta {args.port} já está em uso. Escolha outra usando --port.')
+    from app.monitor import hub
+    if args.port < 65535:
+        try:
+            hub.start(args.host, args.port + 1)
+        except Exception:
+            logging.exception('Monitor hub unavailable on port %s', args.port + 1)
     logging.info('Listening on %s:%s; network: %s', args.host, args.port, ', '.join(network_urls(args.host, args.port)) or 'none')
     if desktop:
         threading.Thread(target=server.run, daemon=True).start()

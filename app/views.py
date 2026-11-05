@@ -25,7 +25,9 @@ def status(request):
         startup = startup_enabled()
     from app.network import network_urls
     urls = network_urls(os.environ.get('LUAMP_HOST', '127.0.0.1'), os.environ.get('LUAMP_PORT', '8765'))
-    return JsonResponse({'name': 'Lua MediaPaper', 'version': '1.2.0', 'desktop': desktop, 'startup': startup, 'maxUploadMB': 30, 'networkUrls': urls})
+    from app.monitor import hub
+    return JsonResponse({'name': 'Lua MediaPaper', 'version': '1.2.0', 'desktop': desktop, 'startup': startup, 'maxUploadMB': 30, 'networkUrls': urls,
+                         'monitorPort': hub.port if hub.running() else None})
 
 @ensure_csrf_cookie
 @require_http_methods(['GET', 'PATCH'])
@@ -188,3 +190,36 @@ def convert_pdf(request):
     response = FileResponse(BytesIO(result), content_type='application/epub+zip', as_attachment=True, filename=filename + '.epub')
     response['Cache-Control'] = 'no-store'
     return response
+
+@ensure_csrf_cookie
+@require_GET
+def monitors(request):
+    from app.monitor import hub
+    response = JsonResponse(hub.snapshot())
+    response['Cache-Control'] = 'no-store'
+    return response
+
+@require_http_methods(['PATCH', 'DELETE'])
+def monitor_device(request, device_id):
+    from app.monitor import hub
+    local = request.META.get('REMOTE_ADDR') in ('127.0.0.1', '::1')
+    # In the portable app, approving or removing a screen is reserved to the PC itself.
+    if os.environ.get('LUAMP_DESKTOP') == '1' and not local:
+        try:
+            body = json.loads(request.body or b'{}')
+        except ValueError:
+            body = {}
+        if request.method == 'DELETE' or 'approved' in body:
+            return JsonResponse({'error': 'Aprove ou remova telas no próprio computador.'}, status=403)
+    try:
+        if request.method == 'DELETE':
+            hub.forget(device_id)
+            return JsonResponse({'ok': True})
+        body = json.loads(request.body)
+        if not isinstance(body, dict) or set(body) - {'name', 'side', 'offset', 'approved'}:
+            raise ValueError('Alteração inválida.')
+        return JsonResponse(hub.update(device_id, body))
+    except KeyError:
+        return JsonResponse({'error': 'Tela não encontrada.'}, status=404)
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({'error': str(exc) or 'Alteração inválida.'}, status=400)

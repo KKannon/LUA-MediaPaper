@@ -54,10 +54,14 @@ Se o navegador bloquear um vídeo com som, o `/live` mostra somente um botão pa
 | `/definicoes` | Relógio, data, enquadramento, brilho, vídeo e inicialização |
 | `/mais` | Catálogo de ferramentas |
 | `/mais/epub-pdf` | Conversor de EPUB para PDF |
+| `/mais/pdf-epub` | Conversor de PDF para EPUB |
+| `/monitor` | Lua OS: transforma o celular/tablet em uma tela extra do PC |
 | `/api/status` | Status, versão e recursos do modo de execução |
 | `/api/wallpaper` | GET com ETag e PATCH parcial de mídia/preferências; alterações exigem CSRF |
 | `/api/convert` | POST multipart: `file`, `pageSize` e `fontSize`; retorna PDF |
 | `/api/startup` | POST JSON `{"enabled":true}`; somente no modo desktop e via loopback |
+| `/api/convert-pdf` | POST multipart: `file` e `title` opcional; retorna EPUB |
+| `/api/monitors` | GET das telas extras; PATCH/DELETE em `/api/monitors/<id>` (aprovar, posicionar, renomear, remover) |
 
 ## Wallpapers
 
@@ -82,6 +86,37 @@ Cole o link de um vídeo do YouTube (`youtube.com/watch`, `youtu.be`, Shorts) de
 Selecione ou arraste um EPUB de até **30 MB**. Escolha papel A4 ou Carta e tamanho de texto 10, 11, 12 ou 14 pt. O processamento preserva a ordem de leitura, títulos, parágrafos, negrito, itálico, listas e imagens raster internas. Cada capítulo começa em uma página nova e o PDF recebe numeração. Quando ficar pronto, clique em **Baixar PDF**.
 
 O conversor usa um layout de leitura próprio: CSS do EPUB, fontes especiais, tabelas e layouts complexos não são reproduzidos fielmente. EPUBs com recursos criptografados são recusados, incluindo publicações com DRM ou fontes ofuscadas. Scripts não são executados e recursos remotos não são buscados. O limite descompactado é 150 MB, com até 4.000 entradas e até 20 MB por recurso. Arquivos são processados em memória ou em arquivos temporários gerenciados pelo Django; não são salvos em uma biblioteca permanente nem enviados a serviços externos.
+
+## PDF para EPUB
+
+Em **Mais → PDF para EPUB**, envie um PDF de até **30 MB** e **1.000 páginas**. O app refaz o texto para se ajustar à tela do leitor:
+
+- junta as linhas em parágrafos e desfaz as palavras hifenizadas na quebra de linha;
+- detecta títulos pelo tamanho da fonte e mantém as imagens na posição em que aparecem;
+- divide os capítulos pelos marcadores (sumário) do PDF ou, sem eles, a cada 10 páginas;
+- remove números de página e gera sumário EPUB 3, compatível também com leitores EPUB 2.
+
+Funciona melhor com PDFs de texto. PDFs digitalizados viram um EPUB com as imagens das páginas, sem reconhecimento de texto (OCR). Colunas, tabelas e fórmulas podem mudar de lugar. PDFs com senha são recusados. Nada é enviado a serviços externos.
+
+## Telas extras e Lua OS (/monitor)
+
+Transforme um celular, tablet ou outro computador em uma **tela extra** do PC:
+
+1. No dispositivo, abra `http://IP-DO-PC:8765/monitor` (o endereço aparece em **Telas extras**, na Home).
+2. No PC, a Home mostra o pedido: clique em **Aprovar**. No executável, aprovar e remover telas só funciona no próprio PC.
+3. Arraste a tela para o lado do PC (esquerda, direita, acima ou abaixo) e para a altura certa. É por esse trecho da borda que o mouse vai passar.
+
+**Mouse compartilhado (executável no Windows):** quando o mouse encosta nesse trecho da borda, ele some do PC e aparece no dispositivo. Mouse, cliques, rolagem e teclado passam a controlar o Lua OS. Para voltar, leve o mouse de volta pela mesma borda. Se o dispositivo desconectar, o mouse volta sozinho ao PC.
+
+**Lua OS:** o dispositivo mostra uma área de trabalho com o seu wallpaper, relógio e uma barra de apps (YouTube, X, Instagram, Google e Navegador para qualquer site ou pesquisa). As janelas podem ser movidas, redimensionadas, minimizadas e maximizadas, e têm voltar, avançar, recarregar e barra de endereço. Links que abrem nova aba viram uma nova janela.
+
+Cada janela é uma aba de verdade do **Microsoft Edge** (ou Chrome), aberto de forma invisível pelo app com um perfil próprio em `%LOCALAPPDATA%/LuaMediaPaper/data/browser`. Por isso funcionam sites que não deixam ser incorporados em outras páginas, inclusive login, que fica salvo nesse perfil. A imagem de cada janela é transmitida ao dispositivo pela rede. O **som sai pelo PC**, como num monitor comum.
+
+- O toque também funciona: toque para clicar, arraste para rolar. **Teclado** na barra abre o teclado do celular para digitar na janela em foco.
+- A conexão em tempo real usa a porta **8766** (a porta do app + 1). Só páginas servidas pelo próprio app podem se conectar.
+- Até 8 telas e 8 janelas por tela. Telas não aprovadas não abrem janelas nem recebem o mouse.
+- Quem usa uma tela aprovada controla esse navegador e as contas logadas nele. Aprove só dispositivos seus.
+- Limites: a imagem é transmitida como uma sequência de quadros JPEG, então vídeos ficam menos fluidos que no PC. O mouse compartilhado não funciona em telas protegidas do Windows (UAC, Ctrl+Alt+Del) e precisa de um mouse comum, não de mesa digitalizadora em modo absoluto. No modo servidor ou no Docker não há mouse compartilhado, e as janelas exigem Edge ou Chrome instalado (`LUAMP_BROWSER` aponta o executável).
 
 ## Desenvolvimento
 

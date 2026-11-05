@@ -20,5 +20,5 @@ COPY --from=frontend /build/static/frontend/ ./static/frontend/
 RUN useradd --create-home lua
 RUN mkdir -p /home/lua/data && chown lua:lua /home/lua/data
 USER lua
-EXPOSE 8765
+EXPOSE 8765 8766
 CMD ["python", "launcher.py", "--server", "--host", "0.0.0.0", "--port", "8765"]
