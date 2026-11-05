@@ -44,12 +44,17 @@ def main():
         from pypdf import PdfReader
         from io import BytesIO
         client = Client(HTTP_HOST='localhost')
-        for route in ('/', '/live', '/definicoes', '/mais', '/mais/epub-pdf', '/api/status'):
+        for route in ('/', '/live', '/definicoes', '/mais', '/mais/epub-pdf', '/mais/pdf-epub', '/api/status'):
             if client.get(route).status_code != 200:
                 raise RuntimeError('Route failed: ' + route)
         pdf = convert_epub(sample_epub())
         if 'Olá' not in PdfReader(BytesIO(pdf)).pages[0].extract_text():
             raise RuntimeError('PDF conversion failed')
+        from app.pdf_epub import convert_pdf
+        from zipfile import ZipFile
+        epub = convert_pdf(pdf)
+        if 'Olá' not in ZipFile(BytesIO(epub)).read('OEBPS/text/section0001.xhtml').decode():
+            raise RuntimeError('EPUB conversion failed')
         # The portable build must ship everything the YouTube importer needs.
         from app.youtube import tool
         import subprocess, yt_dlp, yt_dlp_ejs
@@ -60,7 +65,7 @@ def main():
             if result.returncode:
                 raise RuntimeError('Tool failed: ' + name)
             tools[name] = result.stdout.split('\n')[0].strip()
-        report = {'ok': True, 'routes': 6, 'pdfBytes': len(pdf), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg'))), 'ytDlp': yt_dlp.version.__version__, 'tools': tools}
+        report = {'ok': True, 'routes': 7, 'pdfBytes': len(pdf), 'epubBytes': len(epub), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg'))), 'ytDlp': yt_dlp.version.__version__, 'tools': tools}
         Path('lua-smoke-test.json').write_text(json.dumps(report), encoding='utf-8')
         return
     local_host = '127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host

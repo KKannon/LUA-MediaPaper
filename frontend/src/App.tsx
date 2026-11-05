@@ -124,7 +124,7 @@ export default function App() {
       .catch(() => setOnline(false));
   }, []);
   useEffect(() => {
-    document.title = `${live ? "Ao vivo" : location.pathname.startsWith("/definicoes") ? "Definições" : location.pathname.startsWith("/mais/epub-pdf") ? "EPUB para PDF" : location.pathname.startsWith("/mais") ? "Mais ferramentas" : "Home"} · Lua MediaPaper`;
+    document.title = `${live ? "Ao vivo" : location.pathname.startsWith("/definicoes") ? "Definições" : location.pathname.startsWith("/mais/epub-pdf") ? "EPUB para PDF" : location.pathname.startsWith("/mais/pdf-epub") ? "PDF para EPUB" : location.pathname.startsWith("/mais") ? "Mais ferramentas" : "Home"} · Lua MediaPaper`;
   }, [location.pathname]);
   const updatePreference = <K extends keyof Preferences>(
     key: K,
@@ -215,7 +215,8 @@ export default function App() {
           }
         />
         <Route path="/mais" element={<Tools />} />
-        <Route path="/mais/epub-pdf" element={<Converter />} />
+        <Route path="/mais/epub-pdf" element={<Converter kind="epub-pdf" />} />
+        <Route path="/mais/pdf-epub" element={<Converter kind="pdf-epub" />} />
         <Route
           path="*"
           element={
@@ -1110,7 +1111,7 @@ function Tools() {
             Escolha o que precisa e deixe o Lua cuidar do resto.
           </p>
         </div>
-        <span className="pill">1 ferramenta disponível</span>
+        <span className="pill">2 ferramentas disponíveis</span>
       </div>
       <div className="tools-grid">
         <Link to="/mais/epub-pdf" className="panel tool-card">
@@ -1130,6 +1131,23 @@ function Tools() {
             <ArrowRight size={16} />
           </span>
         </Link>
+        <Link to="/mais/pdf-epub" className="panel tool-card">
+          <div className="flex justify-between items-start">
+            <div className="tool-icon">
+              <FileText size={23} strokeWidth={1.5} />
+            </div>
+            <span className="pill">DOCUMENTOS</span>
+          </div>
+          <h2>PDF para EPUB</h2>
+          <p>
+            Texto que se ajusta à tela. Transforme PDFs em EPUBs para ler no
+            celular, tablet ou leitor digital.
+          </p>
+          <span className="tool-link">
+            Abrir conversor
+            <ArrowRight size={16} />
+          </span>
+        </Link>
       </div>
       <div className="tools-note">
         <Sparkles size={22} className="shrink-0 text-primary" />
@@ -1143,7 +1161,33 @@ function Tools() {
   );
 }
 
-function Converter() {
+const converters = {
+  "epub-pdf": {
+    from: "EPUB",
+    to: "PDF",
+    extension: ".epub",
+    accept: ".epub,application/epub+zip",
+    endpoint: "/api/convert",
+    eyebrow: "BIBLIOTECA SEM LIMITES",
+    title: "Seu EPUB, agora em PDF.",
+    subtitle:
+      "Selecione seu livro. Ajuste os detalhes. Leve a leitura com você.",
+  },
+  "pdf-epub": {
+    from: "PDF",
+    to: "EPUB",
+    extension: ".pdf",
+    accept: ".pdf,application/pdf",
+    endpoint: "/api/convert-pdf",
+    eyebrow: "LEITURA QUE SE ADAPTA",
+    title: "Seu PDF, agora em EPUB.",
+    subtitle:
+      "Texto que acompanha o tamanho da tela, do celular ao leitor digital.",
+  },
+} as const;
+
+function Converter({ kind }: { kind: keyof typeof converters }) {
+  const config = converters[kind];
   const [file, setFile] = useState<File | null>(null);
   const [pageSize, setPageSize] = useState("A4");
   const [fontSize, setFontSize] = useState("11");
@@ -1168,8 +1212,8 @@ function Converter() {
   }, []);
   function selectFile(value: File | undefined) {
     if (!value) return;
-    if (!value.name.toLowerCase().endsWith(".epub")) {
-      toast.error("Escolha um arquivo com extensão .epub.");
+    if (!value.name.toLowerCase().endsWith(config.extension)) {
+      toast.error(`Escolha um arquivo com extensão ${config.extension}.`);
       return;
     }
     if (value.size > 30 * 1024 * 1024) {
@@ -1189,9 +1233,11 @@ function Converter() {
       await fetch("/api/status", { signal: controller.current.signal });
       const data = new FormData();
       data.append("file", file);
-      data.append("pageSize", pageSize);
-      data.append("fontSize", fontSize);
-      const r = await fetch("/api/convert", {
+      if (kind === "epub-pdf") {
+        data.append("pageSize", pageSize);
+        data.append("fontSize", fontSize);
+      }
+      const r = await fetch(config.endpoint, {
         method: "POST",
         headers: { "X-CSRFToken": csrf() },
         body: data,
@@ -1209,10 +1255,10 @@ function Converter() {
       resultRef.current = url;
       setResult({
         url,
-        name: file.name.replace(/\.epub$/i, ".pdf"),
+        name: file.name.replace(/\.[^.]+$/, "") + "." + config.to.toLowerCase(),
         size: blob.size,
       });
-      toast.success("Seu PDF está pronto!");
+      toast.success(`Seu ${config.to} está pronto!`);
     } catch (e) {
       if (active.current)
         toast.error(e instanceof Error ? e.message : "Falha na conversão.");
@@ -1230,12 +1276,10 @@ function Converter() {
         <div>
           <div className="eyebrow">
             <BookOpen size={12} />
-            BIBLIOTECA SEM LIMITES
+            {config.eyebrow}
           </div>
-          <h1>Seu EPUB, agora em PDF.</h1>
-          <p className="subtitle">
-            Selecione seu livro. Ajuste os detalhes. Leve a leitura com você.
-          </p>
+          <h1>{config.title}</h1>
+          <p className="subtitle">{config.subtitle}</p>
         </div>
       </div>
       <div className="converter-grid">
@@ -1243,9 +1287,9 @@ function Converter() {
           <input
             ref={input}
             type="file"
-            accept=".epub,application/epub+zip"
+            accept={config.accept}
             className="hidden"
-            aria-label="Selecionar arquivo EPUB"
+            aria-label={`Selecionar arquivo ${config.from}`}
             onChange={(e) => {
               selectFile(e.target.files?.[0]);
               e.target.value = "";
@@ -1266,7 +1310,7 @@ function Converter() {
               <Button asChild className="gap-2">
                 <a href={result.url} download={result.name}>
                   <ArrowDownToLine size={15} />
-                  Baixar PDF
+                  Baixar {config.to}
                 </a>
               </Button>
               <Button
@@ -1292,7 +1336,7 @@ function Converter() {
                 <div className="grow">
                   <strong>{file.name}</strong>
                   <small>
-                    {(file.size / 1024 / 1024).toFixed(2)} MB · EPUB
+                    {(file.size / 1024 / 1024).toFixed(2)} MB · {config.from}
                   </small>
                 </div>
                 <Button
@@ -1323,7 +1367,7 @@ function Converter() {
                       Tudo certo. Seu livro está pronto para ser convertido.
                     </p>
                     <Button className="gap-2" onClick={() => void convert()}>
-                      Converter para PDF
+                      Converter para {config.to}
                       <ArrowRight size={14} />
                     </Button>
                     <button
@@ -1364,7 +1408,7 @@ function Converter() {
               </div>
               <h2>Solte seu livro por aqui.</h2>
               <p>
-                Arraste um arquivo EPUB ou escolha no computador.
+                Arraste um arquivo {config.from} ou escolha no computador.
                 <br />
                 Até 30 MB por arquivo.
               </p>
@@ -1381,54 +1425,85 @@ function Converter() {
           </div>
         </section>
         <aside className="sidebar">
-          <section className="panel">
-            <h2 className="panel-heading">
-              <SlidersHorizontal />
-              Detalhes do PDF
-            </h2>
-            <label className="label" htmlFor="page-size">
-              Tamanho da página
-            </label>
-            <select
-              id="page-size"
-              value={pageSize}
-              disabled={busy || !!result}
-              onChange={(e) => setPageSize(e.target.value)}
-              className="field mb-5"
-            >
-              <option value="A4">A4 · 210 × 297 mm</option>
-              <option value="LETTER">Carta · 216 × 279 mm</option>
-            </select>
-            <label className="label" htmlFor="font-size">
-              Tamanho do texto
-            </label>
-            <select
-              id="font-size"
-              value={fontSize}
-              disabled={busy || !!result}
-              onChange={(e) => setFontSize(e.target.value)}
-              className="field"
-            >
-              <option value="10">Pequeno · 10 pt</option>
-              <option value="11">Padrão · 11 pt</option>
-              <option value="12">Confortável · 12 pt</option>
-              <option value="14">Grande · 14 pt</option>
-            </select>
-            <p className="helper !mb-0">
-              Capítulos na ordem de leitura, com imagens, títulos e páginas
-              numeradas.
-            </p>
-          </section>
-          <section className="panel tip-panel">
-            <div className="flex gap-2 items-center text-[11px] text-primary">
-              <CircleHelp size={14} />
-              Antes de converter
-            </div>
-            <p>
-              Use um EPUB sem DRM. O texto é adaptado para a página; layouts
-              complexos, fontes especiais e tabelas podem mudar.
-            </p>
-          </section>
+          {kind === "epub-pdf" ? (
+            <>
+              <section className="panel">
+                <h2 className="panel-heading">
+                  <SlidersHorizontal />
+                  Detalhes do PDF
+                </h2>
+                <label className="label" htmlFor="page-size">
+                  Tamanho da página
+                </label>
+                <select
+                  id="page-size"
+                  value={pageSize}
+                  disabled={busy || !!result}
+                  onChange={(e) => setPageSize(e.target.value)}
+                  className="field mb-5"
+                >
+                  <option value="A4">A4 · 210 × 297 mm</option>
+                  <option value="LETTER">Carta · 216 × 279 mm</option>
+                </select>
+                <label className="label" htmlFor="font-size">
+                  Tamanho do texto
+                </label>
+                <select
+                  id="font-size"
+                  value={fontSize}
+                  disabled={busy || !!result}
+                  onChange={(e) => setFontSize(e.target.value)}
+                  className="field"
+                >
+                  <option value="10">Pequeno · 10 pt</option>
+                  <option value="11">Padrão · 11 pt</option>
+                  <option value="12">Confortável · 12 pt</option>
+                  <option value="14">Grande · 14 pt</option>
+                </select>
+                <p className="helper !mb-0">
+                  Capítulos na ordem de leitura, com imagens, títulos e páginas
+                  numeradas.
+                </p>
+              </section>
+              <section className="panel tip-panel">
+                <div className="flex gap-2 items-center text-[11px] text-primary">
+                  <CircleHelp size={14} />
+                  Antes de converter
+                </div>
+                <p>
+                  Use um EPUB sem DRM. O texto é adaptado para a página; layouts
+                  complexos, fontes especiais e tabelas podem mudar.
+                </p>
+              </section>
+            </>
+          ) : (
+            <>
+              <section className="panel">
+                <h2 className="panel-heading">
+                  <SlidersHorizontal />
+                  Como fica o EPUB
+                </h2>
+                <p className="helper !mb-0">
+                  Parágrafos refeitos, palavras hifenizadas reunidas, títulos
+                  detectados pelo tamanho da fonte e imagens no lugar. Os
+                  capítulos seguem os marcadores do PDF; sem marcadores, o livro
+                  é dividido a cada 10 páginas. Números de página são removidos.
+                </p>
+              </section>
+              <section className="panel tip-panel">
+                <div className="flex gap-2 items-center text-[11px] text-primary">
+                  <CircleHelp size={14} />
+                  Antes de converter
+                </div>
+                <p>
+                  Funciona melhor com PDFs de texto, como livros e artigos. PDFs
+                  digitalizados (só imagens) viram um EPUB de imagens, sem
+                  reconhecimento de texto. Tabelas, colunas e fórmulas podem
+                  mudar. Até 1.000 páginas, sem senha.
+                </p>
+              </section>
+            </>
+          )}
         </aside>
       </div>
       <Footer />

@@ -63,6 +63,6 @@ foreach ($name in 'ffmpeg', 'ffprobe', 'node') {
 }
 & $pythonExe -c "from app.desktop import icon_image; icon_image(256).save('build/lua.ico', sizes=[(16,16),(32,32),(48,48),(128,128),(256,256)])"
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar ícone.' }
-& $pythonExe -m PyInstaller --noconfirm --onefile --windowed --distpath $OutputDirectory --name Lua-MediaPaper --icon build/lua.ico --add-data 'static;static' --add-binary 'build/tools;tools' --collect-all yt_dlp_ejs --hidden-import yt_dlp --collect-all reportlab --collect-all app --collect-all mediapaper --collect-all pypdf --hidden-import django.template.defaulttags --hidden-import django.template.defaultfilters --hidden-import django.template.loader_tags --hidden-import django.templatetags.static --hidden-import whitenoise.middleware --hidden-import pystray._win32 launcher.py
+& $pythonExe -m PyInstaller --noconfirm --onefile --windowed --distpath $OutputDirectory --name Lua-MediaPaper --icon build/lua.ico --add-data 'static;static' --add-binary 'build/tools;tools' --collect-all yt_dlp_ejs --collect-all pdfminer --hidden-import yt_dlp --collect-all reportlab --collect-all app --collect-all mediapaper --collect-all pypdf --hidden-import django.template.defaulttags --hidden-import django.template.defaultfilters --hidden-import django.template.loader_tags --hidden-import django.templatetags.static --hidden-import whitenoise.middleware --hidden-import pystray._win32 launcher.py
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao gerar executável.' }
 Write-Output "Pronto: $OutputDirectory\Lua-MediaPaper.exe"

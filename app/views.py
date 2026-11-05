@@ -167,3 +167,24 @@ def convert(request):
     response = FileResponse(BytesIO(result), content_type='application/pdf', as_attachment=True, filename=filename + '.pdf')
     response['Cache-Control'] = 'no-store'
     return response
+
+@require_POST
+def convert_pdf(request):
+    upload = request.FILES.get('file')
+    if upload is None or not upload.name.lower().endswith('.pdf'):
+        return JsonResponse({'error': 'Selecione um arquivo .pdf válido.'}, status=400)
+    if upload.size > 30 * 1024 * 1024:
+        return JsonResponse({'error': 'O arquivo deve ter no máximo 30 MB.'}, status=413)
+    from app.pdf_epub import convert_pdf as convert, InvalidPdf
+    try:
+        title = request.POST.get('title', '').strip()[:200] or None
+        result = convert(upload.read(), title=title)
+    except InvalidPdf as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+    except Exception:
+        logger.exception('PDF conversion failed')
+        return JsonResponse({'error': 'Não foi possível converter este PDF. Confira se o arquivo está íntegro e sem senha.'}, status=422)
+    filename = re.sub(r'[^\w .-]', '', upload.name.rsplit('.', 1)[0])[:100] or 'livro'
+    response = FileResponse(BytesIO(result), content_type='application/epub+zip', as_attachment=True, filename=filename + '.epub')
+    response['Cache-Control'] = 'no-store'
+    return response
