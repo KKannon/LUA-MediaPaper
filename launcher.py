@@ -50,7 +50,17 @@ def main():
         pdf = convert_epub(sample_epub())
         if 'Olá' not in PdfReader(BytesIO(pdf)).pages[0].extract_text():
             raise RuntimeError('PDF conversion failed')
-        report = {'ok': True, 'routes': 6, 'pdfBytes': len(pdf), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg')))}
+        # The portable build must ship everything the YouTube importer needs.
+        from app.youtube import tool
+        import subprocess, yt_dlp, yt_dlp_ejs
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+        tools = {}
+        for name, option in (('ffmpeg', '-version'), ('ffprobe', '-version'), ('node', '--version')):
+            result = subprocess.run([tool(name), option], capture_output=True, text=True, timeout=60, creationflags=flags)
+            if result.returncode:
+                raise RuntimeError('Tool failed: ' + name)
+            tools[name] = result.stdout.split('\n')[0].strip()
+        report = {'ok': True, 'routes': 6, 'pdfBytes': len(pdf), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg'))), 'ytDlp': yt_dlp.version.__version__, 'tools': tools}
         Path('lua-smoke-test.json').write_text(json.dumps(report), encoding='utf-8')
         return
     local_host = '127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host

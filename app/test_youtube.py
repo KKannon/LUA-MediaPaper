@@ -170,3 +170,15 @@ class YouTubeTests(SimpleTestCase):
         (outside/'important.txt').write_text('keep')
         youtube._safe_remove_work(outside)
         self.assertTrue((outside/'important.txt').exists())
+
+    def test_bot_check_has_clear_message_and_keeps_previous_video(self):
+        old = self.previous()
+        job = self.job()
+        def blocked(info, **kwargs):
+            raise Exception("ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you’re not a bot.")
+        self.run_fake(job, download=blocked)
+        current = youtube.read_job()
+        self.assertEqual(current['status'], 'error')
+        self.assertIn('anti-robô', current['message'])
+        self.assertTrue(old.exists())
+        self.assertEqual(list(self.staging.iterdir()), [])

@@ -200,7 +200,7 @@ def _run(job):
     try:
         work.mkdir()
         from yt_dlp import YoutubeDL
-        options = {'format':FORMAT, 'format_sort':['res:2160', 'fps'], 'noplaylist':True, 'ignoreerrors':False, 'cachedir':False,
+        options = {'format':FORMAT, 'format_sort':['res:2160', 'fps', 'vcodec:vp9'], 'noplaylist':True, 'ignoreerrors':False, 'cachedir':False,
                    'outtmpl':str(work / 'source.%(ext)s'), 'merge_output_format':'mp4',
                    'ffmpeg_location':str(Path(tool('ffmpeg')).parent), 'js_runtimes':{'node':{'path':tool('node')}},
                    'postprocessors':[{'key':'FFmpegVideoRemuxer','preferedformat':'mp4'}],
@@ -241,7 +241,12 @@ def _run(job):
         change_job(job['id'], status='cancelled', message='Download cancelado.')
     except Exception as exc:
         logger.exception('YouTube import failed')
-        message = str(exc) if isinstance(exc, ImportError) else 'Não foi possível baixar este vídeo. O YouTube pode estar bloqueando o acesso ou o vídeo pode ser restrito.'
+        if isinstance(exc, ImportError):
+            message = str(exc)
+        elif 'confirm you' in str(exc) and 'not a bot' in str(exc):
+            message = 'O YouTube pediu uma verificação anti-robô para esta conexão. Tente novamente mais tarde ou em outra rede.'
+        else:
+            message = 'Não foi possível baixar este vídeo. O YouTube pode estar bloqueando o acesso ou o vídeo pode ser restrito.'
         change_job(job['id'], status='error', message=message, progress=None)
     finally:
         _safe_remove_work(work)

@@ -61,11 +61,21 @@ Se o navegador bloquear um vídeo com som, o `/live` mostra somente um botão pa
 
 ## Wallpapers
 
-Cole uma URL HTTP/HTTPS **direta** de imagem, GIF, MP4, WebM ou outro formato reproduzível pelo navegador. O tipo pode ser detectado pela extensão ou escolhido manualmente, inclusive para links sem extensão. Links de páginas do YouTube/Vimeo não são arquivos de vídeo. Formatos e codecs dependem do navegador. Alguns sites bloqueiam a incorporação; o app mostra um erro e permite voltar ao wallpaper inicial.
+Cole uma URL HTTP/HTTPS **direta** de imagem, GIF, MP4, WebM ou outro formato reproduzível pelo navegador. O tipo pode ser detectado pela extensão ou escolhido manualmente, inclusive para links sem extensão. Links de páginas do Vimeo e de outros sites de vídeo não são arquivos de vídeo; o YouTube tem suporte próprio (veja abaixo). Formatos e codecs dependem do navegador. Alguns sites bloqueiam a incorporação; o app mostra um erro e permite voltar ao wallpaper inicial.
 
 O wallpaper atual e as preferências ficam em SQLite no servidor e são compartilhados por todas as páginas daquela instância. O executável salva os dados em `%LOCALAPPDATA%/LuaMediaPaper/data`; o servidor Python usa `~/.lua-mediapaper`, configurável por `LUAMP_DATA_DIR`; o Compose mantém os dados no volume `lua-data`, inclusive após recriar o contêiner. A primeira página de edição importa as preferências locais antigas uma única vez, sem substituir um estado já configurado.
 
 A coleção pessoal de links permanece no `localStorage` deste navegador e endereço, incluindo a porta, e contém os últimos 20 links. Os quatro wallpapers iniciais são arquivos locais incluídos no executável: funcionam sem internet. Mídias externas precisam de acesso à origem. Vídeos têm pausa, reprodução, som, repetição e reprodução automática; GIFs seguem a animação do arquivo. A reprodução automática com som pode ser bloqueada pelo navegador.
+
+## Vídeos do YouTube
+
+Cole o link de um vídeo do YouTube (`youtube.com/watch`, `youtu.be`, Shorts) de **até 20 minutos** e clique em **Baixar e aplicar YouTube**. O app baixa vídeo e áudio na **melhor resolução disponível, até 4K**, junta tudo em MP4 e aplica como wallpaper quando termina. Se houver 4K e 1080p, fica o 4K. Na mesma resolução, prefere VP9, que roda mais leve que AV1. A tela mostra o progresso, e o download pode ser cancelado.
+
+- Só um vídeo baixado fica guardado. Ao trocar de wallpaper (outro vídeo do YouTube, foto ou link), o vídeo anterior é **apagado** automaticamente. Durante um novo download, o vídeo atual continua tocando até o novo ficar pronto.
+- Lives, playlists e vídeos com mais de 20 minutos são recusados antes de baixar. O download é interrompido se o disco ficar com menos de 512 MB livres.
+- A coleção guarda o link do YouTube: escolher o item de novo baixa o vídeo outra vez.
+- O executável já inclui ffmpeg, ffprobe e Node.js; não precisa instalar nada. No modo servidor, eles precisam estar no PATH (o Docker já instala).
+- Vídeos ficam em `media` dentro da pasta de dados. O YouTube às vezes pede verificação anti-robô para conexões de datacenter/VPN; em casa isso é raro.
 
 ## EPUB para PDF
 
