@@ -44,7 +44,7 @@ def main():
         from pypdf import PdfReader
         from io import BytesIO
         client = Client(HTTP_HOST='localhost')
-        for route in ('/', '/live', '/monitor', '/definicoes', '/mais', '/mais/epub-pdf', '/mais/pdf-epub', '/api/status', '/api/monitors'):
+        for route in ('/', '/screen', '/definicoes', '/mais', '/mais/epub-pdf', '/mais/pdf-epub', '/api/status', '/api/monitors'):
             if client.get(route).status_code != 200:
                 raise RuntimeError('Route failed: ' + route)
         pdf = convert_epub(sample_epub())
@@ -65,7 +65,7 @@ def main():
             if result.returncode:
                 raise RuntimeError('Tool failed: ' + name)
             tools[name] = result.stdout.split('\n')[0].strip()
-        report = {'ok': True, 'routes': 9, 'pdfBytes': len(pdf), 'epubBytes': len(epub), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg'))), 'ytDlp': yt_dlp.version.__version__, 'tools': tools}
+        report = {'ok': True, 'routes': 8, 'pdfBytes': len(pdf), 'epubBytes': len(epub), 'static': (settings.BASE_DIR / 'static/frontend/index.html').exists(), 'wallpapers': len(list((settings.BASE_DIR / 'static/wallpapers').glob('*.jpg'))), 'ytDlp': yt_dlp.version.__version__, 'tools': tools}
         Path('lua-smoke-test.json').write_text(json.dumps(report), encoding='utf-8')
         return
     local_host = '127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host
@@ -73,7 +73,7 @@ def main():
     from app.youtube import initialize
     initialize()
     try:
-        server = create_server(application, host=args.host, port=args.port, threads=4, max_request_body_size=35*1024*1024, channel_timeout=180)
+        server = create_server(application, host=args.host, port=args.port, threads=4, max_request_body_size=520*1024*1024, channel_timeout=180)
     except OSError:
         if desktop:
             try:

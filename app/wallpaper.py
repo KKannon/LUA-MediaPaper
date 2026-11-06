@@ -5,7 +5,7 @@ from pathlib import Path
 from django.conf import settings
 
 DEFAULT_MEDIA = {'id': 'forest', 'name': 'Entre a névoa', 'description': 'Um respiro em meio ao verde.', 'url': '/wallpapers/forest.jpg', 'type': 'image'}
-DEFAULT_PREFERENCES = {'clock': True, 'date': True, 'muted': True, 'autoplay': True, 'fit': 'cover', 'dim': 0, 'hour24': True, 'keepAwake': True}
+DEFAULT_PREFERENCES = {'clock': True, 'date': True, 'muted': True, 'autoplay': True, 'fit': 'cover', 'dim': 0, 'hour24': True, 'keepAwake': True, 'idle': 15, 'weather': False, 'city': None}
 
 def _connection():
     directory = Path(settings.LUAMP_DATA_DIR)
@@ -59,6 +59,12 @@ def update_state(changes, initial_revision=None, download_id=None):
     finally:
         connection.close()
 
+IDLE_OPTIONS = (0, 15, 30, 60, 300)  # Seconds without activity before /screen fades to the wallpaper; 0 never.
+
+def _valid_city(value):
+    return (isinstance(value, dict) and set(value) == {'name', 'lat', 'lon'} and isinstance(value['name'], str) and 0 < len(value['name'].strip()) <= 120
+            and all(type(value[k]) in (int, float) for k in ('lat', 'lon')) and -90 <= value['lat'] <= 90 and -180 <= value['lon'] <= 180)
+
 def validate_changes(body):
     from urllib.parse import urlparse
     if not isinstance(body, dict) or not body or set(body) - {'media', 'preferences', 'initialRevision'}:
@@ -82,7 +88,7 @@ def validate_changes(body):
         if media['url'].startswith('/media/'):
             current = read_state()['media']
             if media['url'] != current['url']:
-                raise ValueError('O vídeo anterior já foi removido. Use o link do YouTube para baixá-lo novamente.')
+                raise ValueError('Este arquivo já foi removido. Envie-o novamente ou use o link do YouTube.')
             changes['media'] = current
             builtin = True
         if not builtin and (parsed.scheme not in ('https', 'http') or not parsed.netloc or parsed.username or parsed.password):
@@ -98,6 +104,10 @@ def validate_changes(body):
                 valid = value in ('cover', 'contain')
             elif key == 'dim':
                 valid = type(value) is int and 0 <= value <= 70
+            elif key == 'idle':
+                valid = value in IDLE_OPTIONS
+            elif key == 'city':
+                valid = value is None or _valid_city(value)
             else:
                 valid = type(value) is bool
             if not valid:

@@ -1103,8 +1103,51 @@ kbd {
 .status-dot.offline { background: #6b6f76; box-shadow: none; }
 
 /* Lua OS (/monitor) */
-.os { position: fixed; inset: 0; overflow: hidden; background: #050506; color: #e7e9ea; font-size: 12px; user-select: none; touch-action: none; }
-.os-wallpaper { position: absolute; inset: 0; width: 100%; height: 100%; }
+.screen { position: fixed; inset: 0; overflow: hidden; background: #050506; color: #e7e9ea; font-size: 12px; user-select: none; touch-action: none; }
+/* The wallpaper is always underneath; the system fades over it, and its clock fades out while the system is in front. */
+.screen .stage-clock { transition: opacity .9s ease, transform .9s ease; }
+.screen.unlocked .stage-clock { opacity: 0; transform: scale(.97); }
+.screen.locked .stage-clock { transform: translateY(var(--pull)); opacity: var(--fade); }
+.screen.locked[style*="--pull: 0px"] .stage-clock { transition: opacity .9s ease, transform .35s ease; }
+.screen .live-display .live-shade { transition: background .9s ease; }
+.screen.unlocked .live-display .live-shade { background: rgb(0 0 0 / .18); }
+.os-layer { position: absolute; inset: 0; transition: opacity .9s ease, transform .9s ease; }
+.screen.locked .os-layer { opacity: 0; transform: scale(1.02); pointer-events: none; }
+.screen-lock { position: absolute; inset: 0; z-index: 5; cursor: grab; touch-action: none; }
+.screen-hint { position: absolute; left: 50%; bottom: 6%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: .3rem; font-size: 12px; letter-spacing: .02em; color: rgb(255 255 255 / .85); text-shadow: 0 1px 6px rgb(0 0 0 / .6); opacity: 0; transition: opacity .5s ease; pointer-events: none; text-align: center; padding: 0 1rem; }
+.screen-hint.visible { opacity: 1; }
+.screen-hint svg { animation: lua-nudge 1.6s ease-in-out infinite; }
+@keyframes lua-nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.screen-prompt { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); z-index: 100003; display: flex; align-items: center; gap: .7rem; width: max-content; max-width: calc(100vw - 24px); padding: .55rem .6rem .55rem .9rem; border-radius: .9rem; background: rgb(18 19 22 / .82); backdrop-filter: blur(16px); border: 1px solid rgb(255 255 255 / .1); font-size: 12px; box-shadow: 0 10px 30px rgb(0 0 0 / .35); }
+.screen.unlocked .screen-prompt { top: auto; bottom: 86px; left: auto; right: 12px; transform: none; max-width: min(420px, calc(100vw - 24px)); }
+.screen-prompt .os-button { padding: .35rem .75rem; font-size: 12px; white-space: nowrap; }
+.os-link { font-size: 12px; color: #aeb1b5; text-decoration: underline; text-underline-offset: 3px; }
+.os-gate { z-index: 6; }
+.live-weather { display: flex; align-items: baseline; gap: .5rem; margin-top: 1rem; font-size: clamp(12px, 1.2vw, 16px); text-shadow: 0 1px 8px rgb(0 0 0 / .45); }
+.live-weather strong { font-size: 1.6em; font-weight: 300; }
+.os-pin { opacity: .55; }
+.os-pin.pinned { opacity: 1; color: var(--primary) !important; }
+.os-favicon { width: 22px; height: 22px; border-radius: 5px; object-fit: contain; }
+.os-letter { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; background: rgb(193 230 151 / .18); color: var(--primary); font-weight: 600; font-size: 12px; }
+.os-app.active { background: rgb(255 255 255 / .1); }
+.os-menu { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 140px); overflow: auto; padding: 1rem; border-radius: 1.1rem; background: rgb(18 19 22 / .88); backdrop-filter: blur(20px); border: 1px solid rgb(255 255 255 / .1); z-index: 100001; box-shadow: 0 20px 50px rgb(0 0 0 / .45); }
+.os-menu h2 { font-size: 13px; margin-bottom: .75rem; color: #c8cacd; }
+.os-menu p { margin-top: .75rem; font-size: 11px; color: #8d9095; line-height: 1.5; }
+.os-menu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: .4rem; }
+.os-menu-app { position: relative; }
+.os-menu-app > button:first-child { width: 100%; display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: .8rem .3rem; border-radius: .8rem; font-size: 11px; color: #d4d6d9; }
+.os-menu-app > button:first-child:hover { background: rgb(255 255 255 / .07); }
+.os-menu-app > button:first-child span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.os-unpin { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 999px; color: #8d9095; }
+.os-unpin:hover { background: rgb(255 255 255 / .1); color: #fff; }
+.os-popover { position: absolute; bottom: 86px; transform: translateX(-50%); display: flex; align-items: center; gap: .5rem; padding: .4rem .5rem .4rem .8rem; border-radius: .8rem; background: rgb(18 19 22 / .92); border: 1px solid rgb(255 255 255 / .1); z-index: 100002; font-size: 12px; }
+.os-popover button { display: inline-flex; align-items: center; gap: .3rem; padding: .3rem .5rem; border-radius: .5rem; color: #d4d6d9; }
+.os-popover button:hover { background: rgb(255 255 255 / .08); }
+.city-picker { position: relative; margin: .2rem 0 .8rem; }
+.city-spinner { position: absolute; right: .7rem; top: 50%; transform: translateY(-50%); }
+.city-results { margin-top: .35rem; border: 1px solid rgb(255 255 255 / .08); border-radius: .6rem; overflow: hidden; }
+.city-results button { width: 100%; text-align: left; padding: .5rem .75rem; font-size: 12px; }
+.city-results button:hover { background: rgb(255 255 255 / .06); }
 .os-bar { position: absolute; inset: 0 0 auto; height: 30px; display: flex; justify-content: space-between; align-items: center; padding: 0 .9rem; background: rgb(10 11 12 / .55); backdrop-filter: blur(14px); z-index: 100000; }
 .os-bar button { display: grid; place-items: center; opacity: .8; }
 .os-window { position: absolute; display: flex; flex-direction: column; border-radius: .7rem; overflow: hidden; background: #1a1b1e; border: 1px solid rgb(255 255 255 / .1); box-shadow: 0 16px 50px rgb(0 0 0 / .45); }

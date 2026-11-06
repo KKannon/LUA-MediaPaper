@@ -1,4 +1,4 @@
-"""Hub for /monitor: devices that act as extra screens, their windows (hidden browser tabs) and the shared cursor."""
+"""Hub for /screen: devices that act as extra screens, their windows (hidden browser tabs) and the shared cursor."""
 import asyncio
 import base64
 import json
@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 SIDES = ('left', 'right', 'top', 'bottom')
 MAX_DEVICES = 8
 MAX_WINDOWS = 8
+MAX_APPS = 24
+DEFAULT_APPS = [('YouTube', 'https://www.youtube.com/'), ('X', 'https://x.com/'), ('Instagram', 'https://www.instagram.com/'), ('Google', 'https://www.google.com/')]
 _lock = threading.RLock()
 
 def _store():
@@ -34,6 +36,25 @@ def save_devices(devices):
         temporary = path.with_suffix('.tmp')
         temporary.write_text(json.dumps(devices, ensure_ascii=False), encoding='utf-8')
         temporary.replace(path)
+
+def host_of(url):
+    from urllib.parse import urlparse
+    host = (urlparse(url or '').hostname or '').lower()
+    return host[4:] if host.startswith('www.') else host
+
+def app_name(title, host):
+    """Short app name: the site's own name from the page title, or the domain while the title is unknown."""
+    title = (title or '').strip()
+    if title and '://' not in title and not re.search(r'[/:]\d|^[\w.-]+\.\w{2,}(/|$)', title) and host_of('http://' + title) != host:
+        parts = [part.strip() for part in re.split(r' [-|–—·/] ', title) if part.strip()]
+        for part in (parts[-1], parts[0]):
+            if len(part) <= 24:
+                return part, True
+    label = host if re.fullmatch(r'[\d.]+|localhost', host) else host.split('.')[-2] if host.count('.') else host
+    return label[:1].upper() + label[1:], False
+
+def default_apps():
+    return [{'id': uuid.uuid4().hex[:8], 'name': name, 'url': url, 'host': host_of(url), 'last': url} for name, url in DEFAULT_APPS]
 
 def clean_name(value, fallback='Tela extra'):
     value = re.sub(r'\s+', ' ', str(value or '')).strip()[:40]
@@ -159,6 +180,7 @@ class Hub:
                     await connection.send(json.dumps({'type': 'error', 'message': 'Limite de telas extras atingido. Remova uma tela na Home do PC.'}))
                     return
                 device = devices.setdefault(device_id, {'id': device_id, 'name': clean_name(hello.get('name')), 'approved': False, 'side': None, 'offset': 0, 'created': time.time()})
+                device.setdefault('apps', default_apps())
                 device.update(self._size(hello))
                 save_devices(devices)
             previous = self.connections.get(device_id)
@@ -249,6 +271,9 @@ class Hub:
         window = self.windows.get(message.get('win'))
         if window is not None and window['device'] != device_id:
             return
+        if kind in ('pin', 'unpin', 'launch'):
+            await self._apps(device_id, kind, message, window)
+            return
         if kind == 'open':
             from app.browser import normalize_url
             if sum(1 for w in self.windows.values() if w['device'] == device_id) >= MAX_WINDOWS:
@@ -286,6 +311,56 @@ class Hub:
             text = str(message.get('text', ''))[:500]
             if text:
                 await self.browser.send('Input.insertText', {'text': text}, window['session'], wait=False)
+
+    async def _apps(self, device_id, kind, message, window):
+        with _lock:
+            devices = load_devices()
+            apps = devices[device_id].setdefault('apps', default_apps())
+            if kind == 'pin' and window is not None and window['url'].startswith(('http://', 'https://')):
+                host = host_of(window['url'])
+                if host and not any(app['host'] == host for app in apps) and len(apps) < MAX_APPS:
+                    from urllib.parse import urlparse
+                    origin = urlparse(window['url'])
+                    name, named = app_name(window['title'], host)
+                    apps.append({'id': uuid.uuid4().hex[:8], 'name': clean_name(name, host)[:24], 'named': named, 'url': f'{origin.scheme}://{origin.netloc}/', 'host': host, 'last': window['url']})
+            elif kind == 'unpin':
+                apps[:] = [app for app in apps if app['id'] != message.get('app')]
+            elif kind == 'launch':
+                app = next((dict(app) for app in apps if app['id'] == message.get('app')), None)
+            if kind != 'launch':
+                save_devices(devices)
+        if kind != 'launch':
+            await self._send(device_id, {'type': 'apps', 'apps': apps})
+        elif app is not None:
+            # An app already open is brought to the front instead of opening twice.
+            for open_window in self.windows.values():
+                if open_window['device'] == device_id and host_of(open_window['url']) == app['host']:
+                    await self._send(device_id, {'type': 'focus', 'win': open_window['id']})
+                    return
+            await self._message(device_id, {'type': 'open', 'url': app.get('last') or app['url'], 'w': message.get('w'), 'h': message.get('h')})
+
+    def _remember(self, window):
+        """Pinned apps reopen at the last page visited on their site."""
+        host = host_of(window['url'])
+        if not host or not window['url'].startswith(('http://', 'https://')):
+            return
+        with _lock:
+            devices = load_devices()
+            device = devices.get(window['device'])
+            for app in (device or {}).get('apps', []):
+                if app['host'] != host:
+                    continue
+                changed = app.get('last') != window['url']
+                app['last'] = window['url']
+                if app.get('named') is False:
+                    name, named = app_name(window['title'], host)
+                    if named:
+                        app['name'], app['named'], changed = clean_name(name, host)[:24], True, True
+                if changed:
+                    save_devices(devices)
+                    if app.get('named'):
+                        asyncio.ensure_future(self._send(window['device'], {'type': 'apps', 'apps': device['apps']}))
+                return
 
     def _add_window(self, device_id, target, session, url, width, height, scale):
         window = {'id': uuid.uuid4().hex[:12], 'device': device_id, 'target': target, 'session': session, 'url': url, 'title': '', 'loading': True,
@@ -357,6 +432,7 @@ class Hub:
                 if window['target'] == info['targetId']:
                     window['title'], window['url'] = info.get('title', '')[:200], info.get('url', '')[:2000]
                     window['loading'] = False
+                    self._remember(window)
                     await self._send(window['device'], {'type': 'title', 'win': window['id'], 'title': window['title'], 'url': window['url']})
         elif method == 'Target.targetCreated':
             info = params['targetInfo']

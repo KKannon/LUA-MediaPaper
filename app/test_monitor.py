@@ -139,3 +139,57 @@ class MonitorApiTests(SimpleTestCase):
     def test_changes_require_csrf(self):
         from django.test import Client
         self.assertEqual(Client(enforce_csrf_checks=True).patch('/api/monitors/abc12345', data='{}', content_type='application/json').status_code, 403)
+
+class PinnedAppTests(SimpleTestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.override = override_settings(LUAMP_DATA_DIR=self.directory.name)
+        self.override.enable()
+        self.addCleanup(self.override.disable)
+        self.hub = monitor.Hub()
+        self.hub.browser = FakeBrowser()
+        self.device = FakeConnection()
+        self.hub.connections['dev'] = self.device
+        monitor.save_devices({'dev': {'id': 'dev', 'name': 'Tablet', 'approved': True, 'width': 1000, 'height': 700, 'scale': 1, 'apps': monitor.default_apps()}})
+        self.hub.windows['w1'] = {'id': 'w1', 'device': 'dev', 'target': 't1', 'session': 's1', 'url': 'https://www.netflix.com/browse', 'title': 'netflix.com/browse', 'loading': False, 'w': 600, 'h': 400, 'scale': 1, 'frame': None}
+
+    def apps(self):
+        return monitor.load_devices()['dev']['apps']
+
+    def test_pin_names_the_app_and_reopens_the_last_page(self):
+        asyncio.run(self.hub._message('dev', {'type': 'pin', 'win': 'w1'}))
+        app = self.apps()[-1]
+        self.assertEqual((app['host'], app['name'], app['url']), ('netflix.com', 'Netflix', 'https://www.netflix.com/'))
+        asyncio.run(self.hub._message('dev', {'type': 'pin', 'win': 'w1'}))
+        self.assertEqual(len(self.apps()), 5)  # Same site is not pinned twice.
+        # The page title arrives later and the user keeps browsing: both are remembered.
+        window = self.hub.windows['w1']
+        window['url'], window['title'] = 'https://www.netflix.com/title/123', 'Série boa | Netflix'
+        async def remember():
+            self.hub._remember(window)
+        asyncio.run(remember())
+        app = self.apps()[-1]
+        self.assertEqual((app['name'], app['last']), ('Netflix', 'https://www.netflix.com/title/123'))
+        # Launching an app whose site is open focuses that window instead of opening another.
+        asyncio.run(self.hub._message('dev', {'type': 'launch', 'app': app['id']}))
+        self.assertEqual(self.device.sent[-1], {'type': 'focus', 'win': 'w1'})
+        del self.hub.windows['w1']
+        opened = []
+        async def fake_open(url, width, height, scale):
+            opened.append(url)
+            return 't2', 's2'
+        self.hub.browser.open = fake_open
+        asyncio.run(self.hub._message('dev', {'type': 'launch', 'app': app['id']}))
+        self.assertEqual(opened, ['https://www.netflix.com/title/123'])
+
+    def test_unpin(self):
+        first = self.apps()[0]
+        asyncio.run(self.hub._message('dev', {'type': 'unpin', 'app': first['id']}))
+        self.assertNotIn(first['id'], [app['id'] for app in self.apps()])
+        self.assertEqual(self.device.sent[-1]['type'], 'apps')
+
+    def test_app_names(self):
+        self.assertEqual(monitor.app_name('Home / X', 'x.com'), ('X', True))
+        self.assertEqual(monitor.app_name('Vídeo legal - YouTube', 'youtube.com'), ('YouTube', True))
+        self.assertEqual(monitor.app_name('192.168.0.5:8080/', '192.168.0.5'), ('192.168.0.5', False))

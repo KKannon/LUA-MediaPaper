@@ -65,8 +65,10 @@ class ConversionTests(SimpleTestCase):
 
 class ApiTests(SimpleTestCase):
     def test_all_frontend_routes_and_status(self):
-        for route in ('/', '/home', '/live', '/live/', '/definicoes', '/mais', '/mais/epub-pdf'):
+        for route in ('/', '/home', '/screen', '/screen/', '/definicoes', '/mais', '/mais/epub-pdf', '/mais/pdf-epub'):
             self.assertEqual(self.client.get(route).status_code, 200, route)
+        for route in ('/live', '/monitor/'):
+            self.assertRedirects(self.client.get(route), '/screen', fetch_redirect_response=False)
         self.assertEqual(self.client.get('/api/status').json()['name'], 'Lua MediaPaper')
         self.assertEqual(self.client.get('/does-not-exist').status_code, 404)
 

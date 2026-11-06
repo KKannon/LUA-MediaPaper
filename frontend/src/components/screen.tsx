@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  ChevronUp,
   Expand,
-  Globe,
   Instagram,
   Keyboard,
+  LayoutGrid,
   Maximize2,
   Minus,
   Moon,
+  Pin,
+  PinOff,
   RotateCw,
   Search,
   Shrink,
@@ -18,8 +21,10 @@ import {
   Youtube,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
+import { Live } from "@/components/live";
+import { canFullscreen, keepAwake } from "@/lib/keep-awake";
 import type { Media, Preferences } from "@/lib/storage";
-import { useScreenWakeLock } from "@/lib/use-screen-wake-lock";
+import { useWeather } from "@/lib/use-weather";
 
 type Win = {
   id: string;
@@ -37,28 +42,49 @@ type Device = { id: string; name: string; approved: boolean };
 const BAR = 30; // Top bar height.
 const DOCK = 74; // Space reserved for the dock.
 const TITLE = 38; // Window title bar height.
-const apps = [
-  {
-    name: "YouTube",
-    url: "https://www.youtube.com/",
-    icon: Youtube,
-    color: "#ff3d3d",
-  },
-  { name: "X", url: "https://x.com/", icon: Twitter, color: "#e7e9ea" },
-  {
-    name: "Instagram",
-    url: "https://www.instagram.com/",
-    icon: Instagram,
-    color: "#e1306c",
-  },
-  {
-    name: "Google",
-    url: "https://www.google.com/",
-    icon: Search,
-    color: "#8ab4f8",
-  },
-  { name: "Navegador", url: "", icon: Globe, color: "#c1e697" },
-];
+type App = {
+  id: string;
+  name: string;
+  url: string;
+  host: string;
+  last: string;
+};
+const DOCK_APPS = 5; // More pinned apps than this go to the Apps menu.
+const KNOWN_ICONS: Record<string, [typeof Youtube, string]> = {
+  "youtube.com": [Youtube, "#ff3d3d"],
+  "x.com": [Twitter, "#e7e9ea"],
+  "twitter.com": [Twitter, "#e7e9ea"],
+  "instagram.com": [Instagram, "#e1306c"],
+  "google.com": [Search, "#8ab4f8"],
+};
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+/** Brand icon for known sites, the site's own favicon otherwise, a letter if that fails. */
+function AppIcon({ app }: { app: Pick<App, "host" | "url" | "name"> }) {
+  const [failed, setFailed] = useState(false);
+  const known = KNOWN_ICONS[app.host];
+  if (known) {
+    const [Icon, color] = known;
+    return <Icon size={22} color={color} />;
+  }
+  if (!failed)
+    return (
+      <img
+        className="os-favicon"
+        src={new URL("/favicon.ico", app.url).href}
+        alt=""
+        onError={() => setFailed(true)}
+      />
+    );
+  return (
+    <span className="os-letter">{app.name.slice(0, 1).toUpperCase()}</span>
+  );
+}
 
 function deviceId() {
   let id = localStorage.getItem("lua:monitor-id");
@@ -119,7 +145,7 @@ function typeInto(element: HTMLInputElement, key: string, text: string) {
   element.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-export function MonitorOS({
+export function Screen({
   media,
   preferences,
 }: {
@@ -137,6 +163,20 @@ export function MonitorOS({
   const [launcher, setLauncher] = useState(false);
   const [full, setFull] = useState(false);
   const [typing, setTyping] = useState(false);
+  const [apps, setApps] = useState<App[]>([]);
+  const [menu, setMenu] = useState(false);
+  const [appMenu, setAppMenu] = useState<string | null>(null);
+  // The wallpaper (lock screen) is in front after the idle time; dragging up shows the system again.
+  const [locked, setLocked] = useState(false);
+  const [gate, setGate] = useState(false);
+  const [pull, setPull] = useState(0);
+  const [hint, setHint] = useState(false);
+  const [promptHidden, setPromptHidden] = useState(false);
+  const lastActivity = useRef(Date.now());
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const lockedRef = useRef(false);
   const socket = useRef<WebSocket | null>(null);
   const canvases = useRef(new Map<string, HTMLCanvasElement>());
   const windowsRef = useRef<Win[]>([]);
@@ -146,7 +186,75 @@ export function MonitorOS({
   const keyboard = useRef<HTMLTextAreaElement>(null);
   windowsRef.current = windows;
   focusRef.current = focus;
-  useScreenWakeLock(true);
+  lockedRef.current = locked;
+  const approved = !!device?.approved && !forgotten;
+  const weather = useWeather(
+    preferences.weather && !!preferences.city,
+    preferences.city ? `${preferences.city.lat},${preferences.city.lon}` : "",
+  );
+  const activity = useCallback(() => {
+    lastActivity.current = Date.now();
+  }, []);
+
+  // Idle: fade to the wallpaper. Video playing in the focused window counts as activity (see frames).
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (
+        approved &&
+        !lockedRef.current &&
+        preferences.idle > 0 &&
+        Date.now() - lastActivity.current > preferences.idle * 1000
+      ) {
+        setLocked(true);
+        setMenu(false);
+        setLauncher(false);
+        setAppMenu(null);
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      }
+    }, 1000);
+    const events = [
+      "pointermove",
+      "pointerdown",
+      "keydown",
+      "wheel",
+      "touchstart",
+    ];
+    for (const name of events) window.addEventListener(name, activity, true);
+    return () => {
+      clearInterval(timer);
+      for (const name of events)
+        window.removeEventListener(name, activity, true);
+    };
+  }, [approved, preferences.idle, activity]);
+
+  // Unlocking: drag up with touch, the device's mouse or the PC cursor (its synthetic events bubble here too).
+  function unlockStart(event: React.PointerEvent) {
+    const startY = event.clientY;
+    let distance = 0;
+    const move = (e: PointerEvent) => {
+      distance = Math.min(0, e.clientY - startY);
+      setPull(distance);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setPull(0);
+      if (distance < -Math.max(70, window.innerHeight * 0.15)) unlock();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  function unlock() {
+    activity();
+    setHint(false);
+    if (approved) setLocked(false);
+    else setGate(true);
+  }
+  function showHint() {
+    setHint(true);
+    clearTimeout(hintTimer.current);
+    hintTimer.current = setTimeout(() => setHint(false), 2500);
+  }
 
   const send = useCallback((message: object) => {
     if (socket.current?.readyState === WebSocket.OPEN)
@@ -241,6 +349,7 @@ export function MonitorOS({
               new Blob([bytes.subarray(1 + bytes[0])], { type: "image/jpeg" }),
             );
             const canvas = canvases.current.get(id);
+            if (id === focusRef.current && !lockedRef.current) activity();
             if (canvas) {
               if (
                 canvas.width !== bitmap.width ||
@@ -260,6 +369,7 @@ export function MonitorOS({
         const message = JSON.parse(event.data);
         if (message.type === "state") {
           setDevice(message.device);
+          setApps(message.device.apps ?? []);
           setEdgeInput(message.edgeInput);
           setForgotten(false);
           setWindows((old) => {
@@ -306,6 +416,8 @@ export function MonitorOS({
             return [...old, next];
           });
           setFocus(message.window.id);
+        } else if (message.type === "apps") {
+          setApps(message.apps);
         } else if (message.type === "title") {
           setWindows((old) =>
             old.map((w) =>
@@ -328,6 +440,10 @@ export function MonitorOS({
           );
         } else if (message.type === "cursor") {
           setCursor(message.visible ? { x: message.x, y: message.y } : null);
+          if (message.visible) {
+            activity();
+            if (lockedRef.current) showHint();
+          }
           if (message.visible && remoteTarget.current)
             (
               document.elementFromPoint(message.x, message.y) ?? document.body
@@ -378,6 +494,8 @@ export function MonitorOS({
               init.button === 0
             )
               pressed.dispatchEvent(new MouseEvent("click", init));
+            else if (pressed && init.button === 2)
+              pressed.dispatchEvent(new MouseEvent("contextmenu", init));
           } else
             target.dispatchEvent(
               new WheelEvent("wheel", {
@@ -417,13 +535,14 @@ export function MonitorOS({
 
   // Tell the server where each window is, so the PC cursor can reach the right one.
   useEffect(() => {
-    const visible = windows
-      .filter((w) => !w.minimized)
-      .sort((a, b) => b.z - a.z);
+    const visible =
+      locked || !approved
+        ? []
+        : windows.filter((w) => !w.minimized).sort((a, b) => b.z - a.z);
     send({
       type: "layout",
       // While a field of the shell has focus, the PC keyboard types into it instead of the window.
-      focus: typing ? null : focus,
+      focus: typing || locked ? null : focus,
       rects: visible.map((w) => {
         const g = geometry(w);
         return {
@@ -439,7 +558,7 @@ export function MonitorOS({
         };
       }),
     });
-  }, [windows, focus, typing, send]);
+  }, [windows, focus, typing, locked, approved, send]);
 
   function geometry(w: Win) {
     return w.maximized
@@ -470,8 +589,18 @@ export function MonitorOS({
   }
   function open(url: string) {
     setLauncher(false);
+    setMenu(false);
     send({ type: "open", url });
   }
+  function launch(app: App) {
+    setMenu(false);
+    setAppMenu(null);
+    send({ type: "launch", app: app.id });
+  }
+  const pinnedHosts = new Set(apps.map((a) => a.host));
+  // Long press (touch) or right click opens the small menu to unpin a dock icon.
+  const press = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pressed = useRef(false);
 
   // Dragging a title bar or a resize corner, with touch, mouse or the PC cursor.
   function drag(event: React.PointerEvent, w: Win, mode: "move" | "resize") {
@@ -595,37 +724,53 @@ export function MonitorOS({
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       else await document.documentElement.requestFullscreen();
+      if (preferences.keepAwake) void keepAwake();
     } catch {
       /* Not available on every device. */
     }
   }
 
-  const filter = `brightness(${1 - preferences.dim / 100})`;
-  const background =
-    media.type === "video" ? (
-      <video
-        className="os-wallpaper"
-        src={media.url}
-        autoPlay
-        loop
-        muted
-        playsInline
-        style={{ objectFit: preferences.fit, filter }}
+  const docked = apps.length > DOCK_APPS ? apps.slice(0, DOCK_APPS) : apps;
+  const front = approved ? (locked ? "live" : "os") : gate ? "gate" : "live";
+  return (
+    <main
+      className={`screen ${front === "os" ? "unlocked" : "locked"}`}
+      style={
+        {
+          "--pull": `${pull}px`,
+          "--fade": Math.max(0, 1 + pull / 300),
+        } as React.CSSProperties
+      }
+      onContextMenu={(e) => e.preventDefault()}
+      onPointerDown={() => preferences.keepAwake && void keepAwake()}
+    >
+      <Live
+        media={media}
+        preferences={preferences}
+        weather={weather}
+        interactive={false}
       />
-    ) : (
-      <img
-        className="os-wallpaper"
-        src={media.url}
-        alt=""
-        style={{ objectFit: preferences.fit, filter }}
-      />
-    );
 
-  if (!device || !device.approved || forgotten) {
-    return (
-      <main className="os">
-        {background}
-        <div className="os-gate">
+      {front !== "os" && (
+        <div
+          className="screen-lock"
+          onPointerDown={unlockStart}
+          onPointerMove={showHint}
+          aria-label="Arraste para cima para desbloquear"
+        >
+          <div className={`screen-hint ${hint || !approved ? "visible" : ""}`}>
+            <ChevronUp size={18} />
+            {approved
+              ? "Arraste para cima para desbloquear"
+              : connected
+                ? "Arraste para cima · aprove esta tela no PC para usar o Lua OS"
+                : "Conectando ao Lua…"}
+          </div>
+        </div>
+      )}
+
+      {front === "gate" && (
+        <div className="os-gate" onPointerDown={(e) => e.stopPropagation()}>
           <Moon size={30} className="text-primary" />
           <h1>
             {forgotten
@@ -649,7 +794,8 @@ export function MonitorOS({
               <p>
                 No computador, abra a Home do Lua MediaPaper e aprove{" "}
                 <strong>{device?.name ?? guessName()}</strong> em{" "}
-                <em>Telas extras</em>.
+                <em>Telas extras</em>. Enquanto isso, esta tela mostra o
+                wallpaper.
               </p>
               <label className="os-name">
                 Nome desta tela
@@ -670,257 +816,407 @@ export function MonitorOS({
           ) : (
             <p>Verifique se o PC está ligado e na mesma rede.</p>
           )}
-        </div>
-        <Toaster theme="dark" position="top-center" />
-      </main>
-    );
-  }
-
-  return (
-    <main className="os" onContextMenu={(e) => e.preventDefault()}>
-      {background}
-      <header className="os-bar" onDoubleClick={() => void fullscreen()}>
-        <span className="flex items-center gap-2">
-          <Moon size={13} className="text-primary" />
-          Lua OS · {device.name}
-        </span>
-        <span className="flex items-center gap-3">
-          {!connected && (
-            <span className="flex items-center gap-1 text-[#deaa68]">
-              <WifiOff size={13} /> reconectando
-            </span>
-          )}
-          {edgeInput && <span className="opacity-60">mouse do PC ativo</span>}
-          <span>
-            {now.toLocaleDateString("pt-BR", {
-              weekday: "short",
-              day: "2-digit",
-              month: "short",
-            })}
-          </span>
-          <strong>
-            {now.toLocaleTimeString("pt-BR", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </strong>
-          <button
-            aria-label={full ? "Sair da tela cheia" : "Tela cheia"}
-            onClick={() => void fullscreen()}
-          >
-            {full ? <Shrink size={14} /> : <Expand size={14} />}
+          <button className="os-link" onClick={() => setGate(false)}>
+            Voltar ao wallpaper
           </button>
-        </span>
-      </header>
+        </div>
+      )}
 
-      {windows
-        .filter((w) => !w.minimized)
-        .map((w) => {
-          const g = geometry(w);
-          return (
-            <section
-              key={w.id}
-              className={`os-window ${focus === w.id ? "focused" : ""}`}
-              style={{
-                left: g.x,
-                top: g.y,
-                width: g.w,
-                height: g.h,
-                zIndex: w.z,
-              }}
-              onPointerDown={() => focus !== w.id && raise(w.id)}
-            >
-              <div
-                className="os-title"
-                onPointerDown={(e) =>
-                  (e.target as HTMLElement).closest("button, input") ||
-                  drag(e, w, "move")
-                }
-                onDoubleClick={(e) =>
-                  (e.target as HTMLElement).closest("button, input") ||
-                  update(w.id, { maximized: !w.maximized }, true)
-                }
-              >
-                <button
-                  aria-label="Voltar"
-                  onClick={() =>
-                    send({ type: "nav", win: w.id, action: "back" })
-                  }
-                >
-                  <ArrowLeft size={14} />
-                </button>
-                <button
-                  aria-label="Avançar"
-                  onClick={() =>
-                    send({ type: "nav", win: w.id, action: "forward" })
-                  }
-                >
-                  <ArrowRight size={14} />
-                </button>
-                <button
-                  aria-label="Recarregar"
-                  onClick={() =>
-                    send({ type: "nav", win: w.id, action: "reload" })
-                  }
-                >
-                  <RotateCw size={13} />
-                </button>
-                <form
-                  className="os-address"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const input = e.currentTarget.elements.namedItem(
-                      "url",
-                    ) as HTMLInputElement;
-                    send({
-                      type: "nav",
-                      win: w.id,
-                      action: "go",
-                      url: input.value,
-                    });
-                    input.blur();
-                  }}
-                >
-                  <input
-                    name="url"
-                    key={w.url}
-                    defaultValue={w.url}
-                    title={w.title}
-                    aria-label="Endereço"
-                    onKeyDown={(e) =>
-                      e.key === "Enter" && e.currentTarget.form?.requestSubmit()
-                    }
-                  />
-                </form>
-                <button
-                  aria-label="Minimizar"
-                  onClick={() => update(w.id, { minimized: true })}
-                >
-                  <Minus size={14} />
-                </button>
-                <button
-                  aria-label={w.maximized ? "Restaurar" : "Maximizar"}
-                  onClick={() =>
-                    update(w.id, { maximized: !w.maximized }, true)
-                  }
-                >
-                  <Maximize2 size={13} />
-                </button>
-                <button
-                  aria-label="Fechar"
-                  className="close"
-                  onClick={() => send({ type: "close", win: w.id })}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              <canvas
-                ref={(element) => {
-                  if (element) canvases.current.set(w.id, element);
-                  else canvases.current.delete(w.id);
-                }}
-                className="os-content"
-                tabIndex={-1}
-                onPointerDown={(e) => contentPointer(e, w, "down")}
-                onPointerMove={(e) => contentPointer(e, w, "move")}
-                onPointerUp={(e) => contentPointer(e, w, "up")}
-                onWheel={(e) => {
-                  const box = e.currentTarget.getBoundingClientRect();
-                  send({
-                    type: "mouse",
-                    win: w.id,
-                    action: "wheel",
-                    x: e.clientX - box.left,
-                    y: e.clientY - box.top,
-                    dx: e.deltaX,
-                    dy: e.deltaY,
-                  });
-                }}
-              />
-              {!w.maximized && (
-                <div
-                  className="os-resize"
-                  onPointerDown={(e) => drag(e, w, "resize")}
-                />
+      {approved && (
+        <div className="os-layer" aria-hidden={front !== "os"}>
+          <header className="os-bar" onDoubleClick={() => void fullscreen()}>
+            <span className="flex items-center gap-2">
+              <Moon size={13} className="text-primary" />
+              Lua OS · {device?.name}
+            </span>
+            <span className="flex items-center gap-3">
+              {!connected && (
+                <span className="flex items-center gap-1 text-[#deaa68]">
+                  <WifiOff size={13} /> reconectando
+                </span>
               )}
-            </section>
-          );
-        })}
+              {edgeInput && (
+                <span className="opacity-60 max-sm:hidden">
+                  mouse do PC ativo
+                </span>
+              )}
+              {weather && (
+                <span title={weather.description}>
+                  {weather.temperature}° {weather.city}
+                </span>
+              )}
+              <span className="max-sm:hidden">
+                {now.toLocaleDateString("pt-BR", {
+                  weekday: "short",
+                  day: "2-digit",
+                  month: "short",
+                })}
+              </span>
+              <strong>
+                {now.toLocaleTimeString("pt-BR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: !preferences.hour24,
+                })}
+              </strong>
+              <button
+                aria-label={full ? "Sair da tela cheia" : "Tela cheia"}
+                onClick={() => void fullscreen()}
+              >
+                {full ? <Shrink size={14} /> : <Expand size={14} />}
+              </button>
+            </span>
+          </header>
 
-      {launcher && (
-        <form
-          className="os-launcher"
-          onSubmit={(e) => {
-            e.preventDefault();
-            open(
-              (
-                e.currentTarget.elements.namedItem(
-                  "address",
-                ) as HTMLInputElement
-              ).value,
-            );
-          }}
+          {windows
+            .filter((w) => !w.minimized)
+            .map((w) => {
+              const g = geometry(w);
+              return (
+                <section
+                  key={w.id}
+                  className={`os-window ${focus === w.id ? "focused" : ""}`}
+                  style={{
+                    left: g.x,
+                    top: g.y,
+                    width: g.w,
+                    height: g.h,
+                    zIndex: w.z,
+                  }}
+                  onPointerDown={() => focus !== w.id && raise(w.id)}
+                >
+                  <div
+                    className="os-title"
+                    onPointerDown={(e) =>
+                      (e.target as HTMLElement).closest("button, input") ||
+                      drag(e, w, "move")
+                    }
+                    onDoubleClick={(e) =>
+                      (e.target as HTMLElement).closest("button, input") ||
+                      update(w.id, { maximized: !w.maximized }, true)
+                    }
+                  >
+                    <button
+                      aria-label="Voltar"
+                      onClick={() =>
+                        send({ type: "nav", win: w.id, action: "back" })
+                      }
+                    >
+                      <ArrowLeft size={14} />
+                    </button>
+                    <button
+                      aria-label="Avançar"
+                      onClick={() =>
+                        send({ type: "nav", win: w.id, action: "forward" })
+                      }
+                    >
+                      <ArrowRight size={14} />
+                    </button>
+                    <button
+                      aria-label="Recarregar"
+                      onClick={() =>
+                        send({ type: "nav", win: w.id, action: "reload" })
+                      }
+                    >
+                      <RotateCw size={13} />
+                    </button>
+                    <form
+                      className="os-address"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const input = e.currentTarget.elements.namedItem(
+                          "url",
+                        ) as HTMLInputElement;
+                        send({
+                          type: "nav",
+                          win: w.id,
+                          action: "go",
+                          url: input.value,
+                        });
+                        input.blur();
+                      }}
+                    >
+                      <input
+                        name="url"
+                        key={w.url}
+                        defaultValue={w.url}
+                        title={w.title}
+                        aria-label="Endereço"
+                        onKeyDown={(e) =>
+                          e.key === "Enter" &&
+                          e.currentTarget.form?.requestSubmit()
+                        }
+                      />
+                    </form>
+                    {/^https?:/.test(w.url) && (
+                      <button
+                        className={`os-pin ${pinnedHosts.has(hostOf(w.url)) ? "pinned" : ""}`}
+                        aria-label={
+                          pinnedHosts.has(hostOf(w.url))
+                            ? `Desafixar ${hostOf(w.url)}`
+                            : `Fixar ${hostOf(w.url)} na barra`
+                        }
+                        title={
+                          pinnedHosts.has(hostOf(w.url))
+                            ? "Fixado na barra · abre na última página visitada"
+                            : "Fixar este site na barra"
+                        }
+                        onClick={() => {
+                          const app = apps.find(
+                            (a) => a.host === hostOf(w.url),
+                          );
+                          if (app) send({ type: "unpin", app: app.id });
+                          else {
+                            send({ type: "pin", win: w.id });
+                            toast.success(`${hostOf(w.url)} fixado na barra.`);
+                          }
+                        }}
+                      >
+                        {pinnedHosts.has(hostOf(w.url)) ? (
+                          <Pin size={13} fill="currentColor" />
+                        ) : (
+                          <Pin size={13} />
+                        )}
+                      </button>
+                    )}
+                    <button
+                      aria-label="Minimizar"
+                      onClick={() => update(w.id, { minimized: true })}
+                    >
+                      <Minus size={14} />
+                    </button>
+                    <button
+                      aria-label={w.maximized ? "Restaurar" : "Maximizar"}
+                      onClick={() =>
+                        update(w.id, { maximized: !w.maximized }, true)
+                      }
+                    >
+                      <Maximize2 size={13} />
+                    </button>
+                    <button
+                      aria-label="Fechar"
+                      className="close"
+                      onClick={() => send({ type: "close", win: w.id })}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <canvas
+                    ref={(element) => {
+                      if (element) canvases.current.set(w.id, element);
+                      else canvases.current.delete(w.id);
+                    }}
+                    className="os-content"
+                    tabIndex={-1}
+                    onPointerDown={(e) => contentPointer(e, w, "down")}
+                    onPointerMove={(e) => contentPointer(e, w, "move")}
+                    onPointerUp={(e) => contentPointer(e, w, "up")}
+                    onWheel={(e) => {
+                      const box = e.currentTarget.getBoundingClientRect();
+                      send({
+                        type: "mouse",
+                        win: w.id,
+                        action: "wheel",
+                        x: e.clientX - box.left,
+                        y: e.clientY - box.top,
+                        dx: e.deltaX,
+                        dy: e.deltaY,
+                      });
+                    }}
+                  />
+                  {!w.maximized && (
+                    <div
+                      className="os-resize"
+                      onPointerDown={(e) => drag(e, w, "resize")}
+                    />
+                  )}
+                </section>
+              );
+            })}
+
+          {launcher && (
+            <form
+              className="os-launcher"
+              onSubmit={(e) => {
+                e.preventDefault();
+                open(
+                  (
+                    e.currentTarget.elements.namedItem(
+                      "address",
+                    ) as HTMLInputElement
+                  ).value,
+                );
+              }}
+            >
+              <Search size={16} className="text-primary shrink-0" />
+              <input
+                name="address"
+                autoFocus
+                placeholder="Digite um site ou pesquise no Google"
+                aria-label="Site ou pesquisa"
+                onKeyDown={(e) =>
+                  e.key === "Enter" && e.currentTarget.form?.requestSubmit()
+                }
+              />
+              <button
+                type="button"
+                aria-label="Fechar"
+                onClick={() => setLauncher(false)}
+              >
+                <X size={14} />
+              </button>
+            </form>
+          )}
+
+          {menu && (
+            <section className="os-menu" aria-label="Apps">
+              <h2>Apps fixados</h2>
+              <div className="os-menu-grid">
+                {apps.map((app) => (
+                  <div key={app.id} className="os-menu-app">
+                    <button onClick={() => launch(app)} title={app.last}>
+                      <AppIcon app={app} />
+                      <span>{app.name}</span>
+                    </button>
+                    <button
+                      className="os-unpin"
+                      aria-label={`Desafixar ${app.name}`}
+                      title="Desafixar"
+                      onClick={() => send({ type: "unpin", app: app.id })}
+                    >
+                      <PinOff size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p>
+                Abra um site pela pesquisa e toque no alfinete da janela para
+                fixá-lo. Cada app reabre na última página visitada.
+              </p>
+            </section>
+          )}
+
+          {appMenu && (
+            <div className="os-popover" style={{ left: "50%" }}>
+              <span>{apps.find((a) => a.id === appMenu)?.name}</span>
+              <button
+                onClick={() => {
+                  send({ type: "unpin", app: appMenu });
+                  setAppMenu(null);
+                }}
+              >
+                <PinOff size={13} /> Desafixar
+              </button>
+              <button onClick={() => setAppMenu(null)}>
+                <X size={13} />
+              </button>
+            </div>
+          )}
+
+          <nav className="os-dock" aria-label="Aplicativos">
+            {docked.map((app) => (
+              <button
+                key={app.id}
+                className="os-app"
+                title={app.name}
+                onClick={() => {
+                  if (pressed.current) pressed.current = false;
+                  else launch(app);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setAppMenu(app.id);
+                }}
+                onPointerDown={() => {
+                  pressed.current = false;
+                  press.current = setTimeout(() => {
+                    pressed.current = true;
+                    setAppMenu(app.id);
+                  }, 600);
+                }}
+                onPointerUp={() => clearTimeout(press.current)}
+                onPointerLeave={() => clearTimeout(press.current)}
+              >
+                <AppIcon app={app} />
+                <span>{app.name}</span>
+              </button>
+            ))}
+            {apps.length > DOCK_APPS && (
+              <button
+                className={`os-app ${menu ? "active" : ""}`}
+                title="Todos os apps"
+                onClick={() => {
+                  setMenu((v) => !v);
+                  setLauncher(false);
+                }}
+              >
+                <LayoutGrid size={22} color="#c1e697" />
+                <span>Apps</span>
+              </button>
+            )}
+            <button
+              className="os-app"
+              title="Pesquisar ou abrir um site"
+              onClick={() => {
+                setLauncher((v) => !v);
+                setMenu(false);
+              }}
+            >
+              <Search size={22} color="#c1e697" />
+              <span>Pesquisar</span>
+            </button>
+            {windows.length > 0 && <i className="os-divider" />}
+            {windows.map((w) => (
+              <button
+                key={w.id}
+                className={`os-task ${focus === w.id && !w.minimized ? "active" : ""}`}
+                onClick={() =>
+                  w.minimized || focus !== w.id
+                    ? raise(w.id)
+                    : update(w.id, { minimized: true })
+                }
+                title={w.title || w.url}
+              >
+                {(w.title || w.url || "Nova janela")
+                  .replace(/^https?:\/\/(www\.)?/, "")
+                  .slice(0, 18)}
+              </button>
+            ))}
+            {focus && windows.some((w) => w.id === focus) && (
+              <button
+                className="os-app"
+                title="Teclado na tela"
+                onClick={() => keyboard.current?.focus()}
+              >
+                <Keyboard size={22} />
+                <span>Teclado</span>
+              </button>
+            )}
+          </nav>
+        </div>
+      )}
+
+      {canFullscreen() && !full && !promptHidden && (
+        <div
+          className="screen-prompt"
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          <Globe size={16} className="text-primary shrink-0" />
-          <input
-            name="address"
-            autoFocus
-            placeholder="Digite um site ou pesquise no Google"
-            aria-label="Site ou pesquisa"
-            onKeyDown={(e) =>
-              e.key === "Enter" && e.currentTarget.form?.requestSubmit()
-            }
-          />
+          <Expand size={15} className="text-primary shrink-0" />
+          <span>
+            Use em tela cheia: a tela do aparelho não apaga e tudo fica maior.
+          </span>
+          <button className="os-button" onClick={() => void fullscreen()}>
+            Tela cheia
+          </button>
           <button
-            type="button"
-            aria-label="Fechar"
-            onClick={() => setLauncher(false)}
+            aria-label="Agora não"
+            className="opacity-70"
+            onClick={() => setPromptHidden(true)}
           >
             <X size={14} />
           </button>
-        </form>
+        </div>
       )}
-
-      <nav className="os-dock" aria-label="Aplicativos">
-        {apps.map((app) => (
-          <button
-            key={app.name}
-            className="os-app"
-            onClick={() => (app.url ? open(app.url) : setLauncher((v) => !v))}
-            title={app.name}
-          >
-            <app.icon size={22} color={app.color} />
-            <span>{app.name}</span>
-          </button>
-        ))}
-        {windows.length > 0 && <i className="os-divider" />}
-        {windows.map((w) => (
-          <button
-            key={w.id}
-            className={`os-task ${focus === w.id && !w.minimized ? "active" : ""}`}
-            onClick={() =>
-              w.minimized || focus !== w.id
-                ? raise(w.id)
-                : update(w.id, { minimized: true })
-            }
-            title={w.title || w.url}
-          >
-            {(w.title || w.url || "Nova janela")
-              .replace(/^https?:\/\/(www\.)?/, "")
-              .slice(0, 18)}
-          </button>
-        ))}
-        {focus && windows.some((w) => w.id === focus) && (
-          <button
-            className="os-app"
-            title="Teclado na tela"
-            onClick={() => keyboard.current?.focus()}
-          >
-            <Keyboard size={22} />
-            <span>Teclado</span>
-          </button>
-        )}
-      </nav>
 
       {/* Hidden field that opens the on-screen keyboard and forwards what is typed to the focused window. */}
       <textarea

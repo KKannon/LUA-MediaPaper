@@ -69,7 +69,12 @@ export type Preferences = {
   dim: number;
   hour24: boolean;
   keepAwake: boolean;
+  /** Seconds without activity before /screen fades to the wallpaper; 0 never. */
+  idle: number;
+  weather: boolean;
+  city: City | null;
 };
+export type City = { name: string; lat: number; lon: number };
 export const defaultPreferences: Preferences = {
   clock: true,
   date: true,
@@ -79,6 +84,9 @@ export const defaultPreferences: Preferences = {
   dim: 0,
   hour24: true,
   keepAwake: true,
+  idle: 15,
+  weather: false,
+  city: null,
 };
 export function csrf() {
   return (

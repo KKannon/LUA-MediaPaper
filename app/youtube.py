@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 ACTIVE = ('checking', 'downloading', 'processing')
 FORMAT = 'bestvideo[height<=2160]+bestaudio/best[height<=2160]'
 RESERVE = 512 * 1024 * 1024
+# Files in the media folder: YouTube downloads and uploaded wallpapers. Only the active one is kept.
+MEDIA_NAME = r'[a-f0-9]{32}\.(?:mp4|m4v|webm|mov|jpg|png|webp|gif)'
 _worker = None
 _worker_guard = threading.Lock()
 _media_guard = threading.RLock()
@@ -126,7 +128,7 @@ def cleanup_media():
         active = read_state()['media']['url']
         _cleanup_pending = False
         for path in media_dir.iterdir():
-            if not re.fullmatch(r'[a-f0-9]{32}\.mp4', path.name) or active == '/media/' + path.name:
+            if not re.fullmatch(MEDIA_NAME, path.name) or active == '/media/' + path.name:
                 continue
             try:
                 path.unlink()

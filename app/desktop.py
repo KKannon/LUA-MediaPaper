@@ -63,15 +63,15 @@ def run_tray(server, url, background=False, autostart=True):
         webbrowser.open(url)
     def open_settings(icon=None, item=None):
         webbrowser.open(url + 'definicoes')
-    def open_live(icon=None, item=None):
-        webbrowser.open(url + 'live')
+    def open_screen(icon=None, item=None):
+        webbrowser.open(url + 'screen')
     from app.network import network_urls
     def network_url():
         urls = network_urls(os.environ.get('LUAMP_HOST', '0.0.0.0'), os.environ.get('LUAMP_PORT', '8765'))
         return urls[0] if urls else None
     def open_network(icon=None, item=None):
         if network_url():
-            webbrowser.open(network_url() + 'live')
+            webbrowser.open(network_url() + 'screen')
     def toggle_startup(icon, item):
         set_startup(not startup_enabled())
         icon.update_menu()
@@ -79,7 +79,7 @@ def run_tray(server, url, background=False, autostart=True):
         icon.stop()
     tray = pystray.Icon('LuaMediaPaper', icon_image(), 'Lua MediaPaper', menu=pystray.Menu(
         pystray.MenuItem('Abrir Lua MediaPaper', open_app, default=True),
-        pystray.MenuItem('Abrir wallpaper ao vivo', open_live),
+        pystray.MenuItem('Abrir /screen', open_screen),
         pystray.MenuItem('Definições', open_settings),
         pystray.MenuItem(lambda item: 'Na rede: ' + (network_url() or 'indisponível').removeprefix('http://').rstrip('/'), open_network, enabled=lambda item: network_url() is not None),
         pystray.Menu.SEPARATOR,

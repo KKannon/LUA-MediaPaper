@@ -33,6 +33,7 @@ import {
   Sun,
   Trash2,
   Upload,
+  MapPin,
   Volume2,
   VolumeX,
   X,
@@ -40,8 +41,7 @@ import {
 import { Toaster, toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Live } from "@/components/live";
-import { MonitorOS } from "@/components/monitor";
+import { Screen } from "@/components/screen";
 import { ScreensPanel } from "@/components/screens";
 import { useWallpaper } from "@/lib/use-wallpaper";
 import { useYouTube, isYouTube } from "@/lib/use-youtube";
@@ -59,6 +59,7 @@ import {
   defaultPreferences,
   presets,
   useStored,
+  type City,
   type Media,
   type Preferences,
 } from "@/lib/storage";
@@ -108,11 +109,8 @@ function Toggle({
 
 export default function App() {
   const location = useLocation();
-  const live = /^\/live\/?$/.test(location.pathname);
-  const monitor = /^\/monitor\/?$/.test(location.pathname);
-  const { media, setMedia, preferences, setPreferences } = useWallpaper(
-    live || monitor,
-  );
+  const screen = /^\/screen\/?$/.test(location.pathname);
+  const { media, setMedia, preferences, setPreferences } = useWallpaper(screen);
   const [library, setLibrary] = useStored<Media[]>("lua:library", []);
   const [status, setStatus] = useState<Status | null>(null);
   const [online, setOnline] = useState(false);
@@ -129,14 +127,13 @@ export default function App() {
       .catch(() => setOnline(false));
   }, []);
   useEffect(() => {
-    document.title = `${live ? "Ao vivo" : monitor ? "Lua OS" : location.pathname.startsWith("/definicoes") ? "Definições" : location.pathname.startsWith("/mais/epub-pdf") ? "EPUB para PDF" : location.pathname.startsWith("/mais/pdf-epub") ? "PDF para EPUB" : location.pathname.startsWith("/mais") ? "Mais ferramentas" : "Home"} · Lua MediaPaper`;
+    document.title = `${screen ? "Lua OS" : location.pathname.startsWith("/definicoes") ? "Definições" : location.pathname.startsWith("/mais/epub-pdf") ? "EPUB para PDF" : location.pathname.startsWith("/mais/pdf-epub") ? "PDF para EPUB" : location.pathname.startsWith("/mais") ? "Mais ferramentas" : "Home"} · Lua MediaPaper`;
   }, [location.pathname]);
   const updatePreference = <K extends keyof Preferences>(
     key: K,
     value: Preferences[K],
   ) => setPreferences((previous) => ({ ...previous, [key]: value }));
-  if (live) return <Live media={media} preferences={preferences} />;
-  if (monitor) return <MonitorOS media={media} preferences={preferences} />;
+  if (screen) return <Screen media={media} preferences={preferences} />;
   return (
     <>
       <header className="app-nav">
@@ -266,6 +263,46 @@ function Home({
   const [paused, setPaused] = useState(!preferences.autoplay);
   const [dialog, setDialog] = useState(false);
   const youtube = useYouTube();
+  const [uploading, setUploading] = useState<number | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  // Uploads use XHR for progress; the server applies the file and deletes the previous one.
+  function upload(file: File | undefined) {
+    if (!file) return;
+    if (file.size > 500 * 1024 * 1024) {
+      toast.error("O arquivo deve ter no máximo 500 MB.");
+      return;
+    }
+    const data = new FormData();
+    data.append("file", file);
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/upload");
+    request.setRequestHeader("X-CSRFToken", csrf());
+    request.upload.onprogress = (e) =>
+      e.lengthComputable &&
+      setUploading(Math.round((e.loaded / e.total) * 100));
+    request.onload = () => {
+      setUploading(null);
+      let body: { media?: Media; error?: string } = {};
+      try {
+        body = JSON.parse(request.responseText);
+      } catch {
+        /* Handled below. */
+      }
+      if (request.status !== 200 || !body.media) {
+        toast.error(body.error || "Não foi possível enviar o arquivo.");
+        return;
+      }
+      setMedia(body.media);
+      setDialog(false);
+      toast.success("Arquivo aplicado como wallpaper.");
+    };
+    request.onerror = () => {
+      setUploading(null);
+      toast.error("Falha na conexão durante o envio.");
+    };
+    setUploading(0);
+    request.send(data);
+  }
   const savedYouTubeJob = useRef<string | undefined>(undefined);
   useEffect(() => {
     const job = youtube.job;
@@ -465,6 +502,40 @@ function Home({
         )}
         {isYouTube(url) ? "Baixar e aplicar YouTube" : "Aplicar wallpaper"}
       </Button>
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.mov,.m4v"
+        className="hidden"
+        aria-label="Enviar arquivo do computador"
+        onChange={(e) => {
+          upload(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full h-9 text-xs gap-2 mt-2"
+        disabled={uploading !== null}
+        onClick={() => fileInput.current?.click()}
+      >
+        {uploading !== null ? (
+          <>
+            <LoaderCircle size={13} className="spin" />
+            Enviando… {uploading}%
+          </>
+        ) : (
+          <>
+            <Upload size={13} />
+            Enviar arquivo do computador
+          </>
+        )}
+      </Button>
+      <p className="helper !mb-0">
+        Foto, GIF ou vídeo de até 500 MB. Fica salvo enquanto for o wallpaper
+        atual; ao trocar, é apagado para não ocupar espaço.
+      </p>
     </form>
   );
   return (
@@ -500,9 +571,9 @@ function Home({
             </DialogContent>
           </Dialog>
           <Button asChild className="h-9 text-xs gap-2">
-            <Link to="/live" target="_blank" rel="noopener">
+            <Link to="/screen" target="_blank" rel="noopener">
               <Maximize size={14} />
-              Abrir /live
+              Abrir /screen
             </Link>
           </Button>
         </div>
@@ -882,6 +953,77 @@ function Home({
   );
 }
 
+function CityPicker({
+  city,
+  onChange,
+}: {
+  city: City | null;
+  onChange: (city: City) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<City[]>([]);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setSearching(true);
+      fetch(`/api/weather/search?q=${encodeURIComponent(query)}`, {
+        signal: controller.signal,
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.error) toast.error(data.error);
+          setResults(data.results ?? []);
+        })
+        .catch(() => {})
+        .finally(() => setSearching(false));
+    }, 350);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
+  return (
+    <div className="city-picker">
+      <div className="input-icon">
+        <MapPin size={13} />
+        <input
+          className="field"
+          placeholder={city ? city.name : "Digite sua cidade"}
+          value={query}
+          aria-label="Cidade para a temperatura"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {searching && <LoaderCircle size={13} className="spin city-spinner" />}
+      </div>
+      {results.length > 0 && (
+        <ul className="city-results">
+          {results.map((result) => (
+            <li key={`${result.lat},${result.lon}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  onChange(result);
+                  setQuery("");
+                  setResults([]);
+                  toast.success(`Temperatura de ${result.name.split(",")[0]}.`);
+                }}
+              >
+                {result.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="helper !mb-0">Dados de temperatura: Open-Meteo.</p>
+    </div>
+  );
+}
+
 function Settings({
   preferences,
   updatePreference,
@@ -957,11 +1099,48 @@ function Settings({
           />
           <Toggle
             id="setting-awake"
-            label="Manter tela ligada no /live"
+            label="Manter tela ligada no /screen"
             checked={preferences.keepAwake}
             onChange={(v) => updatePreference("keepAwake", v)}
-            description="Mantém a tela ativa enquanto o /live estiver visível. Requer navegador compatível e HTTPS ou localhost."
+            description="Impede que a tela do aparelho apague enquanto o /screen estiver aberto. Funciona melhor em tela cheia."
           />
+          <div className="option-row">
+            <label htmlFor="setting-idle">Descanso do /screen</label>
+            <select
+              id="setting-idle"
+              className="select-small"
+              value={preferences.idle}
+              onChange={(e) => updatePreference("idle", Number(e.target.value))}
+            >
+              <option value={15}>15 segundos</option>
+              <option value={30}>30 segundos</option>
+              <option value={60}>1 minuto</option>
+              <option value={300}>5 minutos</option>
+              <option value={0}>Nunca</option>
+            </select>
+          </div>
+          <p className="helper !-mt-1">
+            Sem atividade, o Lua OS some suavemente e mostra o wallpaper. Para
+            voltar, arraste para cima. Vídeo tocando na janela em foco conta
+            como atividade.
+          </p>
+          <Toggle
+            id="setting-weather"
+            label="Mostrar temperatura"
+            checked={preferences.weather}
+            onChange={(v) => updatePreference("weather", v)}
+            description={
+              preferences.city
+                ? `Cidade: ${preferences.city.name}`
+                : "Escolha sua cidade abaixo."
+            }
+          />
+          {preferences.weather && (
+            <CityPicker
+              city={preferences.city}
+              onChange={(city) => updatePreference("city", city)}
+            />
+          )}
           <div className="option-row">
             <label htmlFor="setting-fit">Enquadramento</label>
             <select
@@ -1062,7 +1241,7 @@ function Settings({
           <h2>Seu espaço, salvo.</h2>
           <p className="setting-description">
             O wallpaper e as preferências ficam salvos no servidor e
-            sincronizados com o /live. Sua coleção de links continua neste
+            sincronizados com o /screen. Sua coleção de links continua neste
             navegador. Os livros não entram em uma biblioteca no servidor.
           </p>
           <div className="separator" />

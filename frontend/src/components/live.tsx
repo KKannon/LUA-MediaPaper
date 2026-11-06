@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Play, ImageOff } from "lucide-react";
 import type { Media, Preferences } from "@/lib/storage";
+import type { Weather } from "@/lib/use-weather";
 import { useScreenWakeLock } from "@/lib/use-screen-wake-lock";
 
 export function Live({
   media,
   preferences,
+  weather = null,
+  interactive = true,
 }: {
   media: Media;
   preferences: Preferences;
+  weather?: Weather | null;
+  /** F, Esc and double click toggle fullscreen only while the wallpaper is in front. */
+  interactive?: boolean;
 }) {
   const [now, setNow] = useState(new Date());
   const [failed, setFailed] = useState(false);
@@ -42,6 +48,7 @@ export function Live({
     }
   }
   useEffect(() => {
+    if (!interactive) return;
     const key = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "f") {
         event.preventDefault();
@@ -52,7 +59,7 @@ export function Live({
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, []);
+  }, [interactive]);
   const style = {
     objectFit: preferences.fit,
     filter: `brightness(${1 - preferences.dim / 100})`,
@@ -63,7 +70,7 @@ export function Live({
       ref={display}
       className="live-display"
       aria-label={`Wallpaper ao vivo: ${media.name}`}
-      onDoubleClick={() => void fullscreen()}
+      onDoubleClick={() => interactive && void fullscreen()}
     >
       {media.type === "video" ? (
         <video
@@ -111,6 +118,15 @@ export function Live({
               Respire. Este momento é seu.
             </div>
           </>
+        )}
+        {weather && (
+          <div className="live-weather">
+            <strong>{weather.temperature}°</strong>
+            <span>
+              {weather.city}
+              {weather.description && ` · ${weather.description}`}
+            </span>
+          </div>
         )}
       </div>
       {blocked && !failed && (

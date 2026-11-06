@@ -9,6 +9,10 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 logger = logging.getLogger(__name__)
+MEDIA_TYPES = {'.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif'}
+UPLOAD_KINDS = {'.jpg': ('jpg', 'image'), '.jpeg': ('jpg', 'image'), '.png': ('png', 'image'), '.webp': ('webp', 'image'), '.gif': ('gif', 'gif'),
+                '.mp4': ('mp4', 'video'), '.m4v': ('m4v', 'video'), '.webm': ('webm', 'video'), '.mov': ('mov', 'video')}
+MAX_UPLOAD_MB = 500
 
 @ensure_csrf_cookie
 @require_GET
@@ -88,7 +92,8 @@ def downloaded_media(request, filename):
     from django.conf import settings
     from django.http import HttpResponse, StreamingHttpResponse, Http404
     from app.wallpaper import read_state
-    if not re.fullmatch(r'[a-f0-9]{32}\.mp4', filename) or read_state()['media']['url'] != '/media/' + filename:
+    from app.youtube import MEDIA_NAME
+    if not re.fullmatch(MEDIA_NAME, filename) or read_state()['media']['url'] != '/media/' + filename:
         raise Http404()
     root = (Path(settings.LUAMP_DATA_DIR) / 'media').resolve()
     path = (root / filename).resolve()
@@ -122,7 +127,7 @@ def downloaded_media(request, filename):
                     yield chunk
         except FileNotFoundError:
             return
-    response = HttpResponse(status=code, content_type='video/mp4') if request.method == 'HEAD' else StreamingHttpResponse(chunks(), status=code, content_type='video/mp4')
+    response = HttpResponse(status=code, content_type=MEDIA_TYPES[path.suffix]) if request.method == 'HEAD' else StreamingHttpResponse(chunks(), status=code, content_type=MEDIA_TYPES[path.suffix])
     response['Content-Length'] = end - start + 1
     response['Accept-Ranges'] = 'bytes'
     response['Cache-Control'] = 'no-store'
@@ -223,3 +228,105 @@ def monitor_device(request, device_id):
         return JsonResponse({'error': 'Tela não encontrada.'}, status=404)
     except (ValueError, TypeError) as exc:
         return JsonResponse({'error': str(exc) or 'Alteração inválida.'}, status=400)
+
+def _looks_valid(upload, extension, kind):
+    """Content must match the extension: images are decoded, videos need a container signature."""
+    upload.seek(0)
+    head = upload.read(64)
+    upload.seek(0)
+    if kind == 'video':
+        return head[:4] == b'\x1a\x45\xdf\xa3' or head[4:8] in (b'ftyp', b'moov', b'wide', b'mdat', b'free', b'skip')
+    from PIL import Image
+    try:
+        with Image.open(upload) as image:
+            image.verify()
+            return image.format == {'jpg': 'JPEG', 'png': 'PNG', 'webp': 'WEBP', 'gif': 'GIF'}[extension]
+    except Exception:
+        return False
+    finally:
+        upload.seek(0)
+
+@require_POST
+def upload_media(request):
+    import shutil
+    import uuid
+    from pathlib import Path
+    from app import youtube
+    from app.wallpaper import update_state
+    upload = request.FILES.get('file')
+    suffix = Path(upload.name).suffix.lower() if upload else ''
+    if upload is None or suffix not in UPLOAD_KINDS:
+        return JsonResponse({'error': 'Envie uma imagem (JPG, PNG, WebP), GIF ou vídeo (MP4, WebM, MOV).'}, status=400)
+    if upload.size > MAX_UPLOAD_MB * 1024 * 1024:
+        return JsonResponse({'error': f'O arquivo deve ter no máximo {MAX_UPLOAD_MB} MB.'}, status=413)
+    extension, kind = UPLOAD_KINDS[suffix]
+    if not _looks_valid(upload, extension, kind):
+        return JsonResponse({'error': 'O conteúdo do arquivo não corresponde ao formato informado.'}, status=400)
+    media_dir, _ = youtube._paths()
+    if shutil.disk_usage(media_dir).free < upload.size + youtube.RESERVE:
+        return JsonResponse({'error': 'Não há espaço livre suficiente no computador para este arquivo.'}, status=507)
+    name = f'{uuid.uuid4().hex}.{extension}'
+    partial = media_dir / (name + '.part')
+    try:
+        with partial.open('wb') as output:
+            for chunk in upload.chunks():
+                output.write(chunk)
+    except OSError:
+        partial.unlink(missing_ok=True)
+        return JsonResponse({'error': 'Não foi possível salvar o arquivo.'}, status=500)
+    title = re.sub(r'\s+', ' ', Path(upload.name).stem).strip()[:150] or 'Arquivo enviado'
+    media = {'id': 'upload-' + name[:12], 'name': title, 'description': f'Arquivo do computador · {upload.size / 1024 / 1024:.1f} MB'.replace('.', ','), 'url': '/media/' + name, 'type': kind}
+    with youtube._media_guard:
+        partial.replace(media_dir / name)
+        state = update_state({'media': media})
+        youtube.cleanup_media()  # The previous upload or download is deleted to save space.
+    return JsonResponse(state)
+
+WEATHER_CODES = {0: 'Céu limpo', 1: 'Poucas nuvens', 2: 'Parcialmente nublado', 3: 'Nublado', 45: 'Neblina', 48: 'Neblina', 51: 'Garoa', 53: 'Garoa', 55: 'Garoa forte',
+                 61: 'Chuva fraca', 63: 'Chuva', 65: 'Chuva forte', 66: 'Chuva congelante', 67: 'Chuva congelante', 71: 'Neve', 73: 'Neve', 75: 'Neve forte', 80: 'Pancadas de chuva',
+                 81: 'Pancadas de chuva', 82: 'Temporal', 95: 'Trovoadas', 96: 'Trovoadas com granizo', 99: 'Trovoadas com granizo'}
+_weather_cache = {}
+
+def _fetch_json(url):
+    from urllib.request import Request, urlopen
+    with urlopen(Request(url, headers={'User-Agent': 'LuaMediaPaper'}), timeout=8) as response:
+        return json.loads(response.read(1024 * 1024))
+
+@require_GET
+def weather_search(request):
+    from urllib.parse import urlencode
+    query = re.sub(r'\s+', ' ', request.GET.get('q', '')).strip()[:80]
+    if len(query) < 2:
+        return JsonResponse({'results': []})
+    try:
+        data = _fetch_json('https://geocoding-api.open-meteo.com/v1/search?' + urlencode({'name': query, 'count': 6, 'language': 'pt', 'format': 'json'}))
+    except Exception:
+        return JsonResponse({'error': 'Não foi possível buscar cidades agora. Verifique a internet.'}, status=502)
+    results = []
+    for item in data.get('results', []):
+        label = ', '.join(dict.fromkeys(x for x in (item.get('name'), item.get('admin1'), item.get('country')) if x))
+        results.append({'name': label[:120], 'lat': round(float(item['latitude']), 4), 'lon': round(float(item['longitude']), 4)})
+    return JsonResponse({'results': results})
+
+@require_GET
+def weather(request):
+    import time
+    from urllib.parse import urlencode
+    from app.wallpaper import read_state
+    preferences = read_state()['preferences']
+    city = preferences.get('city')
+    if not preferences.get('weather') or not city:
+        return JsonResponse({'enabled': False})
+    key = (city['lat'], city['lon'])
+    cached = _weather_cache.get(key)
+    if not cached or time.monotonic() - cached[0] > 600:
+        try:
+            data = _fetch_json('https://api.open-meteo.com/v1/forecast?' + urlencode({'latitude': city['lat'], 'longitude': city['lon'], 'current': 'temperature_2m,weather_code,is_day', 'timezone': 'auto'}))
+            current = data['current']
+            cached = (time.monotonic(), {'temperature': round(current['temperature_2m']), 'code': current['weather_code'], 'day': bool(current.get('is_day', 1)),
+                                         'description': WEATHER_CODES.get(current['weather_code'], '')})
+            _weather_cache[key] = cached
+        except Exception:
+            if not cached:
+                return JsonResponse({'enabled': True, 'city': city['name'], 'error': 'Temperatura indisponível no momento.'})
+    return JsonResponse({'enabled': True, 'city': city['name'].split(',')[0], **cached[1]})

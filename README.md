@@ -24,43 +24,51 @@ Baixe **Lua-MediaPaper.exe** na [última release](https://github.com/KKannon/LUA
 
 ### Acesso pela rede
 
-O executável fica disponível para outros dispositivos da mesma rede (celular, TV, outro PC) na porta **8765**. O endereço aparece no menu da bandeja (**Na rede: 192.168.x.x:8765**) e em **Definições → Aplicativo e sistema**. Por exemplo, abra `http://192.168.0.20:8765/live` em outro aparelho.
+O executável fica disponível para outros dispositivos da mesma rede (celular, TV, outro PC) na porta **8765**. O endereço aparece no menu da bandeja (**Na rede: 192.168.x.x:8765**) e em **Definições → Aplicativo e sistema**. Por exemplo, abra `http://192.168.0.20:8765/screen` em outro aparelho.
 
 - Na primeira execução, o Firewall do Windows pode perguntar se o app pode se comunicar na rede: permita em **Redes privadas**.
 - Os endereços IP e o nome deste computador são aceitos automaticamente; outros cabeçalhos `Host` são recusados. Se o IP mudar, reinicie o app pela bandeja.
 - Qualquer pessoa na mesma rede pode ver e alterar o wallpaper, pois o app não tem login. Use apenas em redes de confiança ou inicie com `--host 127.0.0.1`.
 - **Iniciar com o Windows** só pode ser alterado no próprio computador.
 
-O wallpaper ocupa a janela do aplicativo ou toda a tela usando o modo tela cheia. Ele **não substitui o fundo nativo do Windows atrás dos ícones**. Use **Abrir /live** na Home, ou o ícone de maximizar da prévia para tela cheia imediata. Saia com **Esc**.
+O wallpaper ocupa a janela do aplicativo ou toda a tela usando o modo tela cheia. Ele **não substitui o fundo nativo do Windows atrás dos ícones**. Use **Abrir /screen** na Home, ou o ícone de maximizar da prévia para tela cheia imediata. Saia com **Esc**.
 
-## /live: seu wallpaper ao vivo
+## /screen: wallpaper ao vivo e Lua OS
 
-Abra **http://127.0.0.1:8765/live** ou clique em **Abrir /live** na Home. No servidor, use `https://SEU-DOMINIO/live`. Essa rota preenche a janela somente com o wallpaper e o relógio/data que você escolher, sem navbar, badges de prévia, rótulo de fotografia, rodapé ou controles de configuração. A Home mantém a interface de edição.
+Abra **http://127.0.0.1:8765/screen**, clique em **Abrir /screen** na Home ou abra o endereço da rede em outro aparelho. Os endereços antigos `/live` e `/monitor` levam para `/screen`.
 
-Deixe `/live` aberto e altere o wallpaper ou as preferências em outra aba, navegador ou dispositivo conectado à mesma instância. As mudanças aparecem automaticamente, sem recarregar, em aproximadamente **um segundo**. Cada instância compartilha um wallpaper. O `/live` é um leitor e não sobrescreve o estado do servidor. A sincronização usa requisições condicionais com ETag; quando não há mudanças, não transfere a configuração novamente. Uma interrupção da rede mantém a última imagem e a sincronização é retomada automaticamente.
+O `/screen` tem dois estados, com uma transição suave entre eles:
 
-Pressione **F** ou dê **dois cliques** no `/live` para entrar/sair da tela cheia nativa do navegador. **Esc** sai da tela cheia. O navegador exige uma ação do usuário para ocultar suas barras; apenas visitar uma URL não pode forçar esse modo.
+- **Wallpaper ao vivo** (tela de descanso): o wallpaper com relógio, data e temperatura, sem nenhum controle. Aparece depois de **15 segundos sem atividade**. O tempo pode ser 15 s, 30 s, 1 min, 5 min ou nunca, em **Definições → Descanso do /screen**. Vídeo tocando na janela em foco conta como atividade.
+- **Lua OS**: para voltar, toque ou clique e **arraste para cima**, como numa tela de bloqueio. Funciona com o dedo, com o mouse do aparelho ou com o mouse compartilhado do PC. Um aviso aparece quando o mouse se mexe.
 
-**Manter a tela ligada:** a opção **Definições → Manter tela ligada no /live** vem ativada. Usa a [Screen Wake Lock API](https://developer.mozilla.org/en-US/docs/Web/API/Screen_Wake_Lock_API), libera o bloqueio ao sair da página e tenta recuperá-lo quando a página volta a ficar visível. Requer navegador compatível e contexto seguro: **HTTPS** ou **localhost/127.0.0.1**. Acesso por HTTP a um IP da rede não oferece essa API. O sistema, a economia de bateria e as permissões do navegador podem revogar o bloqueio; nesses casos o app não consegue garantir que a tela fique ligada. Não altera permanentemente as configurações de energia do dispositivo.
+Um aparelho ainda não aprovado mostra só o wallpaper. Arrastar para cima mostra o pedido de aprovação (veja **Telas extras** abaixo).
 
-Se o navegador bloquear um vídeo com som, o `/live` mostra somente um botão para iniciar a reprodução. Deixe **Silenciar vídeos** ativado para facilitar a reprodução automática.
+Alterações de wallpaper e preferências feitas em qualquer página aparecem no `/screen` em cerca de **um segundo**, sem recarregar. A sincronização usa ETag e é retomada sozinha após uma queda de rede.
+
+**Tela cheia e tela ligada:** o `/screen` pede para entrar em **tela cheia**, que deixa tudo maior e ajuda a tela do aparelho a não apagar. Com **Definições → Manter tela ligada no /screen** (ativada por padrão), o app usa a Screen Wake Lock API em HTTPS/localhost. Pelo endereço `http://IP` da rede, onde essa API não existe, ele toca um vídeo minúsculo e mudo em loop depois do primeiro toque, a mesma técnica da biblioteca NoSleep. Economia de bateria e políticas do sistema ainda podem apagar a tela. Use **F** ou dois cliques no wallpaper para alternar a tela cheia, e **Esc** para sair.
+
+**Temperatura:** em **Definições → Mostrar temperatura**, busque e escolha sua cidade. A temperatura aparece no wallpaper e na barra do Lua OS e é atualizada a cada 10 minutos. Os dados vêm do [Open-Meteo](https://open-meteo.com/), sem chave nem conta. O PC consulta o serviço com as coordenadas da cidade.
+
+Se o navegador bloquear um vídeo com som, aparece um botão para iniciar a reprodução. Deixe **Silenciar vídeos** ativado para facilitar a reprodução automática.
 
 ## Rotas
 
 | Rota | Conteúdo |
 | --- | --- |
 | `/` ou `/home` | Wallpaper, coleção, link de mídia e controles |
-| `/live` | Wallpaper limpo em tela cheia, sincronizado com a edição |
+| `/screen` | Wallpaper ao vivo e Lua OS, sincronizados com a edição (`/live` e `/monitor` redirecionam) |
 | `/definicoes` | Relógio, data, enquadramento, brilho, vídeo e inicialização |
 | `/mais` | Catálogo de ferramentas |
 | `/mais/epub-pdf` | Conversor de EPUB para PDF |
 | `/mais/pdf-epub` | Conversor de PDF para EPUB |
-| `/monitor` | Lua OS: transforma o celular/tablet em uma tela extra do PC |
 | `/api/status` | Status, versão e recursos do modo de execução |
 | `/api/wallpaper` | GET com ETag e PATCH parcial de mídia/preferências; alterações exigem CSRF |
 | `/api/convert` | POST multipart: `file`, `pageSize` e `fontSize`; retorna PDF |
 | `/api/startup` | POST JSON `{"enabled":true}`; somente no modo desktop e via loopback |
 | `/api/convert-pdf` | POST multipart: `file` e `title` opcional; retorna EPUB |
+| `/api/upload` | POST multipart `file`: aplica foto, GIF ou vídeo do computador como wallpaper (até 500 MB) |
+| `/api/weather` | Temperatura atual da cidade escolhida; `/api/weather/search?q=` busca cidades |
 | `/api/monitors` | GET das telas extras; PATCH/DELETE em `/api/monitors/<id>` (aprovar, posicionar, renomear, remover) |
 
 ## Wallpapers
@@ -68,6 +76,8 @@ Se o navegador bloquear um vídeo com som, o `/live` mostra somente um botão pa
 Cole uma URL HTTP/HTTPS **direta** de imagem, GIF, MP4, WebM ou outro formato reproduzível pelo navegador. O tipo pode ser detectado pela extensão ou escolhido manualmente, inclusive para links sem extensão. Links de páginas do Vimeo e de outros sites de vídeo não são arquivos de vídeo; o YouTube tem suporte próprio (veja abaixo). Formatos e codecs dependem do navegador. Alguns sites bloqueiam a incorporação; o app mostra um erro e permite voltar ao wallpaper inicial.
 
 O wallpaper atual e as preferências ficam em SQLite no servidor e são compartilhados por todas as páginas daquela instância. O executável salva os dados em `%LOCALAPPDATA%/LuaMediaPaper/data`; o servidor Python usa `~/.lua-mediapaper`, configurável por `LUAMP_DATA_DIR`; o Compose mantém os dados no volume `lua-data`, inclusive após recriar o contêiner. A primeira página de edição importa as preferências locais antigas uma única vez, sem substituir um estado já configurado.
+
+**Arquivo do computador:** na Home, **Enviar arquivo do computador** aplica uma foto (JPG, PNG, WebP), GIF ou vídeo (MP4, WebM, MOV) de até **500 MB** como wallpaper, com barra de progresso. O conteúdo é conferido com a extensão. O arquivo fica na pasta de dados enquanto for o wallpaper atual. Ao trocar de wallpaper, ele é apagado, como os vídeos do YouTube, então não entra na coleção de links.
 
 A coleção pessoal de links permanece no `localStorage` deste navegador e endereço, incluindo a porta, e contém os últimos 20 links. Os quatro wallpapers iniciais são arquivos locais incluídos no executável: funcionam sem internet. Mídias externas precisam de acesso à origem. Vídeos têm pausa, reprodução, som, repetição e reprodução automática; GIFs seguem a animação do arquivo. A reprodução automática com som pode ser bloqueada pelo navegador.
 
@@ -98,17 +108,21 @@ Em **Mais → PDF para EPUB**, envie um PDF de até **30 MB** e **1.000 páginas
 
 Funciona melhor com PDFs de texto. PDFs digitalizados viram um EPUB com as imagens das páginas, sem reconhecimento de texto (OCR). Colunas, tabelas e fórmulas podem mudar de lugar. PDFs com senha são recusados. Nada é enviado a serviços externos.
 
-## Telas extras e Lua OS (/monitor)
+## Telas extras e Lua OS
 
 Transforme um celular, tablet ou outro computador em uma **tela extra** do PC:
 
-1. No dispositivo, abra `http://IP-DO-PC:8765/monitor` (o endereço aparece em **Telas extras**, na Home).
+1. No dispositivo, abra `http://IP-DO-PC:8765/screen` (o endereço aparece em **Telas extras**, na Home).
 2. No PC, a Home mostra o pedido: clique em **Aprovar**. No executável, aprovar e remover telas só funciona no próprio PC.
 3. Arraste a tela para o lado do PC (esquerda, direita, acima ou abaixo) e para a altura certa. É por esse trecho da borda que o mouse vai passar.
 
 **Mouse compartilhado (executável no Windows):** quando o mouse encosta nesse trecho da borda, ele some do PC e aparece no dispositivo. Mouse, cliques, rolagem e teclado passam a controlar o Lua OS. Para voltar, leve o mouse de volta pela mesma borda. Se o dispositivo desconectar, o mouse volta sozinho ao PC.
 
-**Lua OS:** o dispositivo mostra uma área de trabalho com o seu wallpaper, relógio e uma barra de apps (YouTube, X, Instagram, Google e Navegador para qualquer site ou pesquisa). As janelas podem ser movidas, redimensionadas, minimizadas e maximizadas, e têm voltar, avançar, recarregar e barra de endereço. Links que abrem nova aba viram uma nova janela.
+**Lua OS:** o dispositivo mostra uma área de trabalho com o seu wallpaper, relógio, temperatura e uma barra de apps. As janelas podem ser movidas, redimensionadas, minimizadas e maximizadas, e têm voltar, avançar, recarregar e barra de endereço. Links que abrem nova aba viram uma nova janela.
+
+- **Apps fixados:** YouTube, X, Instagram e Google vêm fixados. Em **Pesquisar**, abra qualquer site ou pesquise no Google; na janela, o **alfinete** fixa aquele site na barra. Cada app fixado **reabre na última página visitada**, e o login fica salvo no perfil do navegador. Se o site já estiver aberto, o app só traz a janela para a frente.
+- **Apps:** com mais de 5 apps fixados, a barra mostra os 5 primeiros e o botão **Apps**, que abre o menu com todos, para abrir ou desafixar. Também dá para desafixar segurando o ícone na barra (ou com o botão direito) e tocando no alfinete da janela.
+- Cada tela extra tem a sua própria lista de apps.
 
 Cada janela é uma aba de verdade do **Microsoft Edge** (ou Chrome), aberto de forma invisível pelo app com um perfil próprio em `%LOCALAPPDATA%/LuaMediaPaper/data/browser`. Por isso funcionam sites que não deixam ser incorporados em outras páginas, inclusive login, que fica salvo nesse perfil. A imagem de cada janela é transmitida ao dispositivo pela rede. O **som sai pelo PC**, como num monitor comum.
 
@@ -116,6 +130,7 @@ Cada janela é uma aba de verdade do **Microsoft Edge** (ou Chrome), aberto de f
 - A conexão em tempo real usa a porta **8766** (a porta do app + 1). Só páginas servidas pelo próprio app podem se conectar.
 - Até 8 telas e 8 janelas por tela. Telas não aprovadas não abrem janelas nem recebem o mouse.
 - Quem usa uma tela aprovada controla esse navegador e as contas logadas nele. Aprove só dispositivos seus.
+- **"Não foi possível abrir o navegador das janelas":** o app reaproveita um Edge invisível que tenha ficado aberto de uma execução anterior. Se o Edge sair na hora, ele encerra esses processos antigos (só os que usam o perfil do Lua, nunca o seu Edge normal) e tenta de novo, inclusive com o Chrome. Se ainda falhar, a mensagem mostra o motivo e o caminho de `launch.log`, na pasta `data/browser`. Envie esse arquivo e o `lua.log` para diagnóstico.
 - Limites: a imagem é transmitida como uma sequência de quadros JPEG, então vídeos ficam menos fluidos que no PC. O mouse compartilhado não funciona em telas protegidas do Windows (UAC, Ctrl+Alt+Del) e precisa de um mouse comum, não de mesa digitalizadora em modo absoluto. No modo servidor ou no Docker não há mouse compartilhado, e as janelas exigem Edge ou Chrome instalado (`LUAMP_BROWSER` aponta o executável).
 
 ## Desenvolvimento

@@ -1,4 +1,4 @@
-"""Hidden Chromium/Edge driven through the DevTools protocol; each tab is a window of the web OS on /monitor."""
+"""Hidden Chromium/Edge driven through the DevTools protocol; each tab is a window of Lua OS on /screen."""
 import asyncio
 import json
 import logging
@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -13,22 +14,24 @@ logger = logging.getLogger(__name__)
 class BrowserUnavailable(RuntimeError):
     pass
 
-def find_browser():
+def find_browsers():
+    """Installed Chromium browsers, Edge first (always present on Windows)."""
     configured = os.environ.get('LUAMP_BROWSER')
     if configured:
-        return configured
-    candidates = []
+        return [configured]
+    found = []
     if sys.platform == 'win32':
-        for root in filter(None, (os.environ.get('PROGRAMFILES(X86)'), os.environ.get('PROGRAMFILES'), os.environ.get('LOCALAPPDATA'))):
-            candidates += [Path(root) / 'Microsoft/Edge/Application/msedge.exe', Path(root) / 'Google/Chrome/Application/chrome.exe']
-    for path in candidates:
-        if path.is_file():
-            return str(path)
+        for name in ('Microsoft/Edge/Application/msedge.exe', 'Google/Chrome/Application/chrome.exe'):
+            for root in filter(None, (os.environ.get('PROGRAMFILES(X86)'), os.environ.get('PROGRAMFILES'), os.environ.get('LOCALAPPDATA'))):
+                path = Path(root) / name
+                if path.is_file() and str(path) not in found:
+                    found.append(str(path))
+                    break
     for name in ('msedge', 'microsoft-edge', 'google-chrome', 'chromium', 'chromium-browser', 'chrome'):
-        found = shutil.which(name)
-        if found:
-            return found
-    return None
+        path = shutil.which(name)
+        if path and path not in found:
+            found.append(path)
+    return found
 
 def normalize_url(value):
     value = (value or '').strip()
@@ -61,36 +64,105 @@ class Browser:
         async with self.lock:
             if self.connection is not None:
                 return
-            executable = find_browser()
-            if not executable:
-                raise BrowserUnavailable('Instale o Microsoft Edge ou o Google Chrome para usar as janelas do /monitor.')
             self.data_dir.mkdir(parents=True, exist_ok=True)
-            port_file = self.data_dir / 'DevToolsActivePort'
-            port_file.unlink(missing_ok=True)
-            args = [executable, '--headless=new', f'--user-data-dir={self.data_dir}', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1',
-                    '--no-first-run', '--no-default-browser-check', '--autoplay-policy=no-user-gesture-required', '--disable-features=Translate,MediaRouter',
-                    '--lang=pt-BR', '--window-size=1280,800', 'about:blank']
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-            self.process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
-            import atexit
-            atexit.register(self.process.terminate)  # Quitting from the tray must not leave the hidden browser running.
-            for _ in range(150):
-                if port_file.is_file():
-                    lines = port_file.read_text(encoding='utf-8').split()
-                    if len(lines) >= 2:
-                        break
-                if self.process.poll() is not None:
-                    raise BrowserUnavailable('O navegador das janelas fechou ao iniciar.')
-                await asyncio.sleep(.1)
-            else:
-                self.process.kill()
-                raise BrowserUnavailable('O navegador das janelas não respondeu.')
+            endpoint = await self._existing()
+            if endpoint is None:
+                endpoint = await self._launch_any()
             from websockets.asyncio.client import connect
-            self.connection = await connect(f'ws://127.0.0.1:{lines[0]}{lines[1]}', max_size=None, ping_interval=None)
+            self.connection = await connect(endpoint, max_size=None, ping_interval=None)
             self.reader = asyncio.create_task(self._read())
             await self.send('Target.setDiscoverTargets', {'discover': True})
             # Sites such as YouTube and X degrade or block browsers that announce themselves as headless.
             self.user_agent = (await self.send('Browser.getVersion'))['userAgent'].replace('HeadlessChrome', 'Chrome').replace('HeadlessEdg', 'Edg')
+            # Tabs left by a previous run have no window on any device; the blank start page keeps the browser alive.
+            for target in (await self.send('Target.getTargets'))['targetInfos']:
+                if target.get('type') == 'page' and target.get('url') != 'about:blank':
+                    await self.close_target(target['targetId'])
+
+    def _endpoint(self):
+        try:
+            lines = (self.data_dir / 'DevToolsActivePort').read_text(encoding='utf-8').split()
+            return f'ws://127.0.0.1:{int(lines[0])}{lines[1]}' if len(lines) >= 2 else None
+        except (OSError, ValueError):
+            return None
+
+    async def _existing(self):
+        """A hidden browser from an earlier run still owns the profile: reuse it instead of fighting over the lock."""
+        endpoint = self._endpoint()
+        if not endpoint:
+            return None
+        from urllib.request import urlopen
+        port = endpoint.split(':')[2].split('/')[0]
+        try:
+            await asyncio.to_thread(lambda: urlopen(f'http://127.0.0.1:{port}/json/version', timeout=2).read())
+            logger.info('Reusing hidden browser on port %s', port)
+            return endpoint
+        except Exception:
+            (self.data_dir / 'DevToolsActivePort').unlink(missing_ok=True)
+            return None
+
+    async def _launch_any(self):
+        executables = find_browsers()
+        if not executables:
+            raise BrowserUnavailable('Instale o Microsoft Edge ou o Google Chrome para usar as janelas do Lua OS.')
+        reasons = []
+        for attempt, (executable, mode) in enumerate([(e, m) for e in executables for m in ('--headless=new', '--headless')]):
+            if attempt == 1:
+                await asyncio.to_thread(self._kill_stale)  # Usual cause of an instant exit: an orphan holding the profile.
+                endpoint = await self._existing()
+                if endpoint:
+                    return endpoint
+            try:
+                return await self._launch(executable, mode)
+            except BrowserUnavailable as exc:
+                reasons.append(f'{Path(executable).name} {mode}: {exc}')
+                logger.warning('Hidden browser attempt failed: %s', reasons[-1])
+        log = self.data_dir / 'launch.log'
+        raise BrowserUnavailable(f'Não foi possível abrir o navegador das janelas ({reasons[-1]}). Detalhes em {log}')
+
+    async def _launch(self, executable, mode):
+        port_file = self.data_dir / 'DevToolsActivePort'
+        port_file.unlink(missing_ok=True)
+        args = [executable, mode, f'--user-data-dir={self.data_dir}', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
+                '--autoplay-policy=no-user-gesture-required', '--disable-features=Translate,MediaRouter', '--lang=pt-BR', '--window-size=1280,800', 'about:blank']
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+        log = open(self.data_dir / 'launch.log', 'ab')
+        log.write(f'\n--- {time.strftime("%Y-%m-%d %H:%M:%S")} {subprocess.list2cmdline(args)}\n'.encode())
+        log.flush()
+        try:
+            self.process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=flags)
+        except OSError as exc:
+            raise BrowserUnavailable(f'não abriu: {exc}') from exc
+        finally:
+            log.close()
+        import atexit
+        atexit.register(self.process.terminate)  # Quitting from the tray must not leave the hidden browser running.
+        for _ in range(300):
+            endpoint = self._endpoint()
+            if endpoint:
+                return endpoint
+            if self.process.poll() is not None:
+                raise BrowserUnavailable(f'fechou ao iniciar, código {self.process.returncode}')
+            await asyncio.sleep(.1)
+        self.process.kill()
+        raise BrowserUnavailable('não respondeu em 30 s')
+
+    def _kill_stale(self):
+        """End browser processes started by earlier runs with this app's profile, never the user's own browser."""
+        profile = str(self.data_dir)
+        try:
+            if sys.platform == 'win32':
+                script = ("Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' OR Name='chrome.exe'\" | "
+                          f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{profile.replace(chr(39), chr(39) * 2)}') }} | "
+                          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
+                subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script], capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                result = subprocess.run(['pgrep', '-f', '--', f'--user-data-dir={profile}'], capture_output=True, text=True, timeout=10)
+                for pid in result.stdout.split():
+                    if int(pid) != os.getpid():
+                        os.kill(int(pid), 9)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            logger.exception('Could not end stale hidden browsers')
 
     async def _read(self):
         try:
