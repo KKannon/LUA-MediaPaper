@@ -1,5 +1,7 @@
 """Hidden Chromium/Edge driven through the DevTools protocol; each tab is a window of Lua OS on /screen."""
 import asyncio
+import base64
+import re
 import json
 import logging
 import os
@@ -11,8 +13,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+PROFILE_IN_USE = 21  # Chromium exit code when another process holds the profile lock.
+
 class BrowserUnavailable(RuntimeError):
-    pass
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 def find_browsers():
     """Installed Chromium browsers, Edge first (always present on Windows)."""
@@ -50,7 +56,14 @@ def normalize_url(value):
 class Browser:
     """One browser process and one DevTools connection, used from a single asyncio loop."""
     def __init__(self, data_dir, on_event):
-        self.data_dir = Path(data_dir) / 'browser'
+        self.root = Path(data_dir)
+        self.choice = self.root / 'browser-profile.txt'
+        self.log_path = self.root / 'browser-launch.log'
+        try:
+            name = self.choice.read_text(encoding='utf-8').strip()
+        except OSError:
+            name = ''
+        self.data_dir = self.root / (name if re.fullmatch(r'browser(-\d+)?', name) else 'browser')
         self.on_event = on_event  # Called with (session_id, method, params).
         self.process = None
         self.connection = None
@@ -105,20 +118,46 @@ class Browser:
         executables = find_browsers()
         if not executables:
             raise BrowserUnavailable('Instale o Microsoft Edge ou o Google Chrome para usar as janelas do Lua OS.')
+        attempts = [(e, m) for e in executables for m in ('--headless=new', '--headless')]
         reasons = []
-        for attempt, (executable, mode) in enumerate([(e, m) for e in executables for m in ('--headless=new', '--headless')]):
-            if attempt == 1:
-                await asyncio.to_thread(self._kill_stale)  # Usual cause of an instant exit: an orphan holding the profile.
-                endpoint = await self._existing()
-                if endpoint:
-                    return endpoint
-            try:
-                return await self._launch(executable, mode)
-            except BrowserUnavailable as exc:
-                reasons.append(f'{Path(executable).name} {mode}: {exc}')
-                logger.warning('Hidden browser attempt failed: %s', reasons[-1])
-        log = self.data_dir / 'launch.log'
-        raise BrowserUnavailable(f'Não foi possível abrir o navegador das janelas ({reasons[-1]}). Detalhes em {log}')
+        for round in range(2):
+            codes = []
+            for index, (executable, mode) in enumerate(attempts):
+                if round == 0 and index == 1:
+                    await asyncio.to_thread(self._kill_stale)  # Usual cause of an instant exit: an orphan holding the profile.
+                    await asyncio.sleep(1)
+                    endpoint = await self._existing()
+                    if endpoint:
+                        return endpoint
+                try:
+                    return await self._launch(executable, mode)
+                except BrowserUnavailable as exc:
+                    codes.append(exc.code)
+                    reasons.append(f'{Path(executable).name} {mode}: {exc}')
+                    logger.warning('Hidden browser attempt failed: %s', reasons[-1])
+            if round == 0 and codes and all(code == PROFILE_IN_USE for code in codes):
+                # Something we cannot end still locks the profile: continue with a fresh one rather than not working.
+                self._new_profile()
+                continue
+            break
+        raise BrowserUnavailable(f'Não foi possível abrir o navegador das janelas ({reasons[-1]}). Detalhes em {self.log_path}')
+
+    def _new_profile(self):
+        number = 2
+        while (self.root / f'browser-{number}').exists():
+            number += 1
+        self.data_dir = self.root / f'browser-{number}'
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.choice.write_text(self.data_dir.name, encoding='utf-8')
+        self._log(f'Perfil em uso por outro processo; usando um perfil novo: {self.data_dir}')
+        logger.warning('Hidden browser profile locked; switched to %s', self.data_dir)
+
+    def _log(self, text):
+        try:
+            with open(self.log_path, 'a', encoding='utf-8') as log:
+                log.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {text}\n')
+        except OSError:
+            pass
 
     async def _launch(self, executable, mode):
         port_file = self.data_dir / 'DevToolsActivePort'
@@ -126,7 +165,7 @@ class Browser:
         args = [executable, mode, f'--user-data-dir={self.data_dir}', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
                 '--autoplay-policy=no-user-gesture-required', '--disable-features=Translate,MediaRouter', '--lang=pt-BR', '--window-size=1280,800', 'about:blank']
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-        log = open(self.data_dir / 'launch.log', 'ab')
+        log = open(self.log_path, 'ab')
         log.write(f'\n--- {time.strftime("%Y-%m-%d %H:%M:%S")} {subprocess.list2cmdline(args)}\n'.encode())
         log.flush()
         try:
@@ -142,26 +181,35 @@ class Browser:
             if endpoint:
                 return endpoint
             if self.process.poll() is not None:
-                raise BrowserUnavailable(f'fechou ao iniciar, código {self.process.returncode}')
+                code = self.process.returncode
+                self._log(f'saiu com código {code}' + (' (perfil em uso por outro processo)' if code == PROFILE_IN_USE else ''))
+                raise BrowserUnavailable(f'fechou ao iniciar, código {code}' + (', perfil em uso' if code == PROFILE_IN_USE else ''), code)
             await asyncio.sleep(.1)
         self.process.kill()
         raise BrowserUnavailable('não respondeu em 30 s')
 
     def _kill_stale(self):
-        """End browser processes started by earlier runs with this app's profile, never the user's own browser."""
-        profile = str(self.data_dir)
+        """End browser processes started by earlier runs with this app's profiles, never the user's own browser."""
+        root = str(self.root)
         try:
             if sys.platform == 'win32':
-                script = ("Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' OR Name='chrome.exe'\" | "
-                          f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{profile.replace(chr(39), chr(39) * 2)}') }} | "
-                          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
-                subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script], capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+                script = ("$root = '" + root.lower().replace("'", "''") + "'; $n = 0; "
+                          "Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'msedge.exe' -or $_.Name -eq 'chrome.exe') -and $_.CommandLine -and $_.CommandLine.ToLower().Contains($root) } | "
+                          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ }; \"processos encerrados: $n\"")
+                # -EncodedCommand avoids any quoting problem with paths and the script itself.
+                encoded = base64.b64encode(script.encode('utf-16-le')).decode()
+                shell = Path(os.environ.get('SYSTEMROOT', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+                result = subprocess.run([str(shell) if shell.is_file() else 'powershell', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+                                        capture_output=True, text=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+                self._log(f'limpeza de processos antigos: {(result.stdout or result.stderr).strip()[:300]}')
             else:
-                result = subprocess.run(['pgrep', '-f', '--', f'--user-data-dir={profile}'], capture_output=True, text=True, timeout=10)
-                for pid in result.stdout.split():
-                    if int(pid) != os.getpid():
-                        os.kill(int(pid), 9)
-        except (OSError, subprocess.SubprocessError, ValueError):
+                result = subprocess.run(['pgrep', '-f', '--', f'--user-data-dir={root}'], capture_output=True, text=True, timeout=10)
+                pids = [int(pid) for pid in result.stdout.split() if int(pid) != os.getpid()]
+                for pid in pids:
+                    os.kill(pid, 9)
+                self._log(f'limpeza de processos antigos: processos encerrados: {len(pids)}')
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            self._log(f'limpeza de processos antigos falhou: {exc}')
             logger.exception('Could not end stale hidden browsers')
 
     async def _read(self):

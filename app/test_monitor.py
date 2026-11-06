@@ -193,3 +193,46 @@ class PinnedAppTests(SimpleTestCase):
         self.assertEqual(monitor.app_name('Home / X', 'x.com'), ('X', True))
         self.assertEqual(monitor.app_name('Vídeo legal - YouTube', 'youtube.com'), ('YouTube', True))
         self.assertEqual(monitor.app_name('192.168.0.5:8080/', '192.168.0.5'), ('192.168.0.5', False))
+
+class BrowserLaunchTests(SimpleTestCase):
+    def test_locked_profile_switches_to_a_fresh_one(self):
+        from pathlib import Path
+        from app import browser
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        async def noop(*args):
+            pass
+        hidden = browser.Browser(directory.name, noop)
+        tried = []
+        async def launch(executable, mode):
+            tried.append((hidden.data_dir.name, mode))
+            if hidden.data_dir.name == 'browser':
+                raise browser.BrowserUnavailable('fechou ao iniciar, código 21', browser.PROFILE_IN_USE)
+            return 'ws://127.0.0.1:1/devtools/browser/x'
+        async def none():
+            return None
+        with patch.object(browser, 'find_browsers', return_value=['msedge.exe']), patch.object(hidden, '_launch', launch), \
+             patch.object(hidden, '_kill_stale') as kill, patch.object(hidden, '_existing', none), patch('asyncio.sleep', return_value=None):
+            endpoint = asyncio.run(hidden._launch_any())
+        self.assertEqual(endpoint, 'ws://127.0.0.1:1/devtools/browser/x')
+        kill.assert_called_once()
+        self.assertEqual(tried, [('browser', '--headless=new'), ('browser', '--headless'), ('browser-2', '--headless=new')])
+        self.assertEqual((Path(directory.name) / 'browser-profile.txt').read_text(encoding='utf-8'), 'browser-2')
+        self.assertEqual(browser.Browser(directory.name, noop).data_dir.name, 'browser-2')  # Remembered by the next run.
+
+    def test_other_failures_do_not_switch_profile(self):
+        from app import browser
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        async def noop(*args):
+            pass
+        hidden = browser.Browser(directory.name, noop)
+        async def launch(executable, mode):
+            raise browser.BrowserUnavailable('fechou ao iniciar, código 1', 1)
+        async def none():
+            return None
+        with patch.object(browser, 'find_browsers', return_value=['msedge.exe']), patch.object(hidden, '_launch', launch), \
+             patch.object(hidden, '_kill_stale'), patch.object(hidden, '_existing', none), patch('asyncio.sleep', return_value=None):
+            with self.assertRaisesRegex(browser.BrowserUnavailable, 'browser-launch.log'):
+                asyncio.run(hidden._launch_any())
+        self.assertEqual(hidden.data_dir.name, 'browser')

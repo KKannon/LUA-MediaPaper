@@ -742,7 +742,12 @@ export function Screen({
         } as React.CSSProperties
       }
       onContextMenu={(e) => e.preventDefault()}
-      onPointerDown={() => preferences.keepAwake && void keepAwake()}
+      onPointerDown={(e) => {
+        if (preferences.keepAwake) void keepAwake();
+        // On the wallpaper, any press can start the drag up; controls on it stop propagation.
+        if (front === "live") unlockStart(e);
+      }}
+      onPointerMove={() => front === "live" && showHint()}
     >
       <Live
         media={media}
@@ -751,21 +756,17 @@ export function Screen({
         interactive={false}
       />
 
-      {front !== "os" && (
+      {front === "live" && (
         <div
-          className="screen-lock"
-          onPointerDown={unlockStart}
-          onPointerMove={showHint}
-          aria-label="Arraste para cima para desbloquear"
+          className={`screen-hint ${hint || !approved ? "visible" : ""}`}
+          role="status"
         >
-          <div className={`screen-hint ${hint || !approved ? "visible" : ""}`}>
-            <ChevronUp size={18} />
-            {approved
-              ? "Arraste para cima para desbloquear"
-              : connected
-                ? "Arraste para cima · aprove esta tela no PC para usar o Lua OS"
-                : "Conectando ao Lua…"}
-          </div>
+          <ChevronUp size={18} />
+          {approved
+            ? "Arraste para cima para desbloquear"
+            : connected
+              ? "Arraste para cima · aprove esta tela no PC para usar o Lua OS"
+              : "Conectando ao Lua…"}
         </div>
       )}
 

@@ -50,7 +50,7 @@ Alterações de wallpaper e preferências feitas em qualquer página aparecem no
 
 **Temperatura:** em **Definições → Mostrar temperatura**, busque e escolha sua cidade. A temperatura aparece no wallpaper e na barra do Lua OS e é atualizada a cada 10 minutos. Os dados vêm do [Open-Meteo](https://open-meteo.com/), sem chave nem conta. O PC consulta o serviço com as coordenadas da cidade.
 
-Se o navegador bloquear um vídeo com som, aparece um botão para iniciar a reprodução. Deixe **Silenciar vídeos** ativado para facilitar a reprodução automática.
+**Som do vídeo:** o wallpaper em vídeo **sempre toca**. No canto, o **alto-falante** ativa o som e ajusta o volume. A escolha fica **salva em cada aparelho**, e **Silenciar vídeos** em Definições é só o padrão para aparelhos novos. Se o navegador exigir um toque para tocar com som, o vídeo começa mudo, o alto-falante pulsa e o som salvo volta no primeiro toque na tela, inclusive no arrasto para desbloquear. O mouse compartilhado do PC não conta como toque para essa regra dos navegadores.
 
 ## Rotas
 
@@ -124,13 +124,13 @@ Transforme um celular, tablet ou outro computador em uma **tela extra** do PC:
 - **Apps:** com mais de 5 apps fixados, a barra mostra os 5 primeiros e o botão **Apps**, que abre o menu com todos, para abrir ou desafixar. Também dá para desafixar segurando o ícone na barra (ou com o botão direito) e tocando no alfinete da janela.
 - Cada tela extra tem a sua própria lista de apps.
 
-Cada janela é uma aba de verdade do **Microsoft Edge** (ou Chrome), aberto de forma invisível pelo app com um perfil próprio em `%LOCALAPPDATA%/LuaMediaPaper/data/browser`. Por isso funcionam sites que não deixam ser incorporados em outras páginas, inclusive login, que fica salvo nesse perfil. A imagem de cada janela é transmitida ao dispositivo pela rede. O **som sai pelo PC**, como num monitor comum.
+Cada janela é uma aba de verdade do **Microsoft Edge** (ou Chrome), aberto de forma invisível pelo app com um perfil próprio em `%LOCALAPPDATA%/LuaMediaPaper/data/browser` (ou `browser-N`, veja abaixo). Por isso funcionam sites que não deixam ser incorporados em outras páginas, inclusive login, que fica salvo nesse perfil. A imagem de cada janela é transmitida ao dispositivo pela rede. O **som sai pelo PC**, como num monitor comum.
 
 - O toque também funciona: toque para clicar, arraste para rolar. **Teclado** na barra abre o teclado do celular para digitar na janela em foco.
 - A conexão em tempo real usa a porta **8766** (a porta do app + 1). Só páginas servidas pelo próprio app podem se conectar.
 - Até 8 telas e 8 janelas por tela. Telas não aprovadas não abrem janelas nem recebem o mouse.
 - Quem usa uma tela aprovada controla esse navegador e as contas logadas nele. Aprove só dispositivos seus.
-- **"Não foi possível abrir o navegador das janelas":** o app reaproveita um Edge invisível que tenha ficado aberto de uma execução anterior. Se o Edge sair na hora, ele encerra esses processos antigos (só os que usam o perfil do Lua, nunca o seu Edge normal) e tenta de novo, inclusive com o Chrome. Se ainda falhar, a mensagem mostra o motivo e o caminho de `launch.log`, na pasta `data/browser`. Envie esse arquivo e o `lua.log` para diagnóstico.
+- **"Não foi possível abrir o navegador das janelas":** o app reaproveita um Edge invisível que tenha ficado aberto de uma execução anterior. Se o Edge sair na hora, ele encerra esses processos antigos (só os que usam o perfil do Lua, nunca o seu Edge normal) e tenta de novo, inclusive com o Chrome. Se o perfil continuar travado (código 21, "perfil em uso"), o app passa a usar um perfil novo (`browser-2`, `browser-3`…) e o mantém nas próximas vezes; só os logins feitos no perfil travado precisam ser refeitos. Se ainda falhar, a mensagem mostra o motivo e o caminho de `browser-launch.log`, na pasta de dados. Envie esse arquivo e o `lua.log` para diagnóstico.
 - Limites: a imagem é transmitida como uma sequência de quadros JPEG, então vídeos ficam menos fluidos que no PC. O mouse compartilhado não funciona em telas protegidas do Windows (UAC, Ctrl+Alt+Del) e precisa de um mouse comum, não de mesa digitalizadora em modo absoluto. No modo servidor ou no Docker não há mouse compartilhado, e as janelas exigem Edge ou Chrome instalado (`LUAMP_BROWSER` aponta o executável).
 
 ## Desenvolvimento

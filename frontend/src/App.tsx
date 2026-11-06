@@ -1180,14 +1180,14 @@ function Settings({
             label="Silenciar vídeos"
             checked={preferences.muted}
             onChange={(v) => updatePreference("muted", v)}
-            description="Comece com o som desligado. Você pode ativá-lo na prévia."
+            description="Padrão para aparelhos novos. Cada aparelho ajusta e guarda o próprio volume pelo alto-falante do /screen."
           />
           <Toggle
             id="setting-autoplay"
             label="Reproduzir automaticamente"
             checked={preferences.autoplay}
             onChange={(v) => updatePreference("autoplay", v)}
-            description="Vídeos são repetidos continuamente. Alguns navegadores exigem uma interação para reproduzir com som."
+            description="Vale para a prévia da Home. No /screen o vídeo sempre toca; se o navegador exigir um toque para o som, ele começa mudo e o som volta no primeiro toque."
           />
           <p className="helper">GIFs seguem a animação do arquivo original.</p>
         </section>
